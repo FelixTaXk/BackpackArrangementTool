@@ -71,6 +71,8 @@ function solverWorkerMain(){
 
     function areAdjacent(a,b){ return (a.neighborMask & b.mask) !== 0n; }
     function pairBonusEvents(a,b){
+      // 守卫：未 instantiate 的原始几何模板不携带 sv/rv，跳过而非崩溃。
+      if(!a.sv || !a.rv || !b.sv || !b.rv) return [];
       if(!areAdjacent(a,b)) return [];
       const events = [];
       const aStats=a.sv, aRates=a.rv, bStats=b.sv, bRates=b.rv;
@@ -103,6 +105,8 @@ function solverWorkerMain(){
       return out;
     }
     function potentialPairBonus(a,b){
+      // 守卫：未 instantiate 的原始几何模板不携带 sv/rv，返回 0 而非崩溃。
+      if(!a.sv || !a.rv || !b.sv || !b.rv) return 0;
       let bonus=0;
       const aStats=a.sv, aRates=a.rv, bStats=b.sv, bRates=b.rv;
       if(a.bonusKind==='provider') bonus += sumRatesProduct(bStats,aRates);
@@ -421,6 +425,7 @@ function solverWorkerMain(){
           if(!p) continue;
           let score=0;
           for(const old of placed){
+            if(!old.sv || !old.rv) continue;
             if(old.area===1 || !areAdjacent(p,old)) continue;
             score += potentialPairBonus(p,old);
           }
@@ -445,7 +450,7 @@ function solverWorkerMain(){
         for(const it of singletonItems){
           const p=placementForItemAtMask(it,cell.mask); if(!p) continue;
           let score=0;
-          for(const old of multiConcrete) if(areAdjacent(p,old)) score += potentialPairBonus(p,old);
+          for(const old of multiConcrete){ if(!old.sv || !old.rv) continue; if(areAdjacent(p,old)) score += potentialPairBonus(p,old); }
           if(score>best) best=score;
         }
         return best;
@@ -485,6 +490,7 @@ function solverWorkerMain(){
           const pg=priorityGainFor(p,placed);
           let multiBonus=0, singleBonus=0, multiNeighbors=0;
           for(const old of placed){
+            if(!old.sv || !old.rv) continue;
             if(!areAdjacent(p,old)) continue;
             const b=potentialPairBonus(p,old);
             if(old.area===1) singleBonus+=b; else {multiBonus+=b; multiNeighbors++;}

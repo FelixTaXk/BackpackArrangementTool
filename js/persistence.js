@@ -35,8 +35,9 @@ function applySharedSettings(data){
     active = active.map(row=>row.map(v=>v !== false && !!v));
   }
   document.getElementById('gridW').value = W; document.getElementById('gridH').value = H;
-  document.getElementById('allowRotate').checked = data.allowRotate === true;
-  document.getElementById('allowMirror').checked = !!data.allowMirror;
+  // 兼容历史字段名：历代存档均用 allowRotate/allowMirror，额外容忍 allowRotation 命名变体。
+  document.getElementById('allowRotate').checked = (data.allowRotate ?? data.allowRotation) === true;
+  document.getElementById('allowMirror').checked = !!(data.allowMirror ?? data.allowMirroring);
   document.getElementById('useAdjacencyBonus').checked = data.useAdjacencyBonus === true;
   if(data.searchMode === 'fast' || data.searchMode === 'deep'){
     document.getElementById('searchMode').value = data.searchMode;
