@@ -17,9 +17,9 @@ const QUALITY_DISPLAY_STYLES = {
   gold:   {fill:'#F7E8B8', border:'#9A7424', text:'#503A08'},
   red:    {fill:'#F4D3D0', border:'#A5443F', text:'#5D1E1B'}
 };
-// 数据库中品质为中文名，展示时先映射为内部 id 再取配色。
-const QUALITY_CN_TO_ID = {绿:'green', 蓝:'blue', 紫:'purple', 金:'gold', 红:'red'};
-function qualityDisplayStyle(q){ return QUALITY_DISPLAY_STYLES[QUALITY_CN_TO_ID[q] || q] || QUALITY_DISPLAY_STYLES.green; }
+// 数据库中品质为中文名，展示时先映射为内部 id 再取配色；talisman-model 亦复用此映射。
+const QUALITY_NAME_TO_ID = {绿:'green', 蓝:'blue', 紫:'purple', 金:'gold', 红:'red'};
+function qualityDisplayStyle(q){ return QUALITY_DISPLAY_STYLES[QUALITY_NAME_TO_ID[q] || q] || QUALITY_DISPLAY_STYLES.green; }
 
 // 属性注册表：7 种法宝属性，displayColor 用于界面展示。
 const ATTRIBUTE_OPTIONS = [
@@ -67,6 +67,7 @@ function validateTalismanDB(){
         }
       }
       if(!['provider','self','none'].includes(t.bonusMode)) errors.push(`bonusMode 非法：${t.bonusMode}`);
+      if(t.priorityTier !== undefined && (!Number.isInteger(t.priorityTier) || t.priorityTier < 0 || t.priorityTier > 5)) errors.push(`priorityTier 越界：${t.priorityTier}`);
       for(const key of ['baseStats','bonusRates']){
         const obj = t[key];
         if(obj && typeof obj === 'object'){

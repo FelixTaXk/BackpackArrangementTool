@@ -24,16 +24,8 @@ function saveConfig(){
   }
   alert('已保存到浏览器本地存储。');
 }
-function loadConfig(){
-  const raw = localStorage.getItem('bagSolverConfig');
-  if(!raw){ alert('没有找到已保存配置。'); return; }
-  let data;
-  try{ data = JSON.parse(raw); }catch(e){ alert('读取失败：配置数据损坏。'); return; }
-  if(!data || Number(data.schemaVersion) !== 2){
-    alert('存档为旧版格式，已重置。');
-    try{ localStorage.removeItem('bagSolverConfig'); }catch(e){}
-    return;
-  }
+// 新旧存档共用的空间与求解设置应用（W/H/active 与各控件）；旧版存档迁移时也复用此函数。
+function applySharedSettings(data){
   W = Math.max(1, Math.min(7, Number(data.W)||7));
   H = Math.max(1, Math.min(6, Number(data.H)||6));
   active = data.active;
@@ -46,12 +38,40 @@ function loadConfig(){
   document.getElementById('allowRotate').checked = data.allowRotate === true;
   document.getElementById('allowMirror').checked = !!data.allowMirror;
   document.getElementById('useAdjacencyBonus').checked = data.useAdjacencyBonus === true;
-  if(data.searchMode === 'fast' || data.searchMode === 'deep') document.getElementById('searchMode').value = data.searchMode;
+  if(data.searchMode === 'fast' || data.searchMode === 'deep'){
+    document.getElementById('searchMode').value = data.searchMode;
+    // 程序化赋值不会触发 change 事件，手动同步限制输入框的 disabled 状态（快速档禁用）。
+    const deep = data.searchMode === 'deep';
+    document.getElementById('nodeLimit').disabled = !deep;
+    document.getElementById('timeLimit').disabled = !deep;
+  }
   if(Number(data.nodeLimit) >= 1000) document.getElementById('nodeLimit').value = String(Math.floor(Number(data.nodeLimit)));
   if(Number(data.timeLimit) >= 100) document.getElementById('timeLimit').value = String(Math.floor(Number(data.timeLimit)));
   document.getElementById('parallelSearch').checked = !!data.parallelSearch;
   document.getElementById('workerCountLabel').hidden = !data.parallelSearch;
   if(Number(data.workerCount) >= 2) document.getElementById('workerCount').value = String(Math.floor(Number(data.workerCount)));
+}
+function loadConfig(){
+  const raw = localStorage.getItem('bagSolverConfig');
+  if(!raw){ alert('没有找到已保存配置。'); return; }
+  let data;
+  try{ data = JSON.parse(raw); }catch(e){ alert('读取失败：配置数据损坏。'); return; }
+  if(!data || Number(data.schemaVersion) !== 2){
+    // 旧版存档：先整体备份到 v1.bak 再删除原 key；清单按 id 引用无法迁移，只能重置，
+    // 但与 schema 无关的空间/求解设置字段仍可沿用。
+    try{
+      localStorage.setItem('bagSolverConfig.v1.bak', raw);
+      localStorage.removeItem('bagSolverConfig');
+    }catch(e){}
+    if(data && typeof data === 'object') applySharedSettings(data);
+    inventory = [];
+    nextItemNo = 1;
+    lastResult = null;
+    renderSpaceGrid(); renderItemsTable(); renderInventoryTable(); renderResultGrid(null);
+    alert('存档为旧版格式，清单已重置（旧数据已备份），空间与求解设置已保留。');
+    return;
+  }
+  applySharedSettings(data);
   // 按 id 查库重建清单；查不到的 id 跳过并提示。
   inventory = [];
   nextItemNo = 1;

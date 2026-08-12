@@ -1,7 +1,7 @@
 // talisman-model.js —— 法宝数据模型（数据库查库/记录归一化/加成摘要/默认优先级档位）。加载顺序 5/13，依赖 config、utils、state。
 'use strict';
 
-const QUALITY_NAME_TO_ID = {绿:'green', 蓝:'blue', 紫:'purple', 金:'gold', 红:'red'};
+// 品质中文名→内部 id 映射 QUALITY_NAME_TO_ID 由 config.js 提供（本文件加载顺序在其之后）。
 
 // 清单 / 法宝库记录统一按 talisman id 查库重建；数值全部来自数据库，不允许自定义。
 function normalizeItemRecord(item){

@@ -1,4 +1,4 @@
-// solver.js —— 求解编排：物品准备/Worker 生命周期/心跳状态/取消/比较/求解入口。加载顺序 10/12，依赖 solver-worker、state、utils、talisman-model。
+// solver.js —— 求解编排：物品准备/Worker 生命周期/心跳状态/取消/比较/求解入口。加载顺序 11/13，依赖 solver-worker、state、utils、talisman-model。
 'use strict';
 
 function getParallelWorkerLimit(){
@@ -207,7 +207,7 @@ function solveAndRender(){
   const {items, skipped, manualItems, manualPriorityLevels} = prepared;
   const {mask:activeMask, count:activeCells} = buildActiveMask();
   if(activeCells===0){ alert('请至少选择一个已解锁空间格。'); return; }
-  if(inventory.length===0){ alert('请先从物品库添加已有物品。'); return; }
+  if(inventory.length===0){ alert('请先从法宝库添加已有法宝。'); return; }
   if(items.length===0){ alert('已有物品都无法放入当前空间。请调整空间、旋转/镜像设置或物品清单。'); return; }
   const searchMode=document.getElementById('searchMode').value;
   const requestedNodeLimit = Math.max(1000, Number(document.getElementById('nodeLimit').value)||2500000);

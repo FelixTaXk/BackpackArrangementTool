@@ -1,4 +1,4 @@
-// solver-worker.js —— 求解 Worker 主体 solverWorkerMain（原样）与 createSolverWorker（toString+Blob URL）。加载顺序 9/12，依赖 state。
+// solver-worker.js —— 求解 Worker 主体 solverWorkerMain（原样）与 createSolverWorker（toString+Blob URL）。加载顺序 10/13，依赖 state。
 'use strict';
 
 function solverWorkerMain(){
@@ -50,9 +50,16 @@ function solverWorkerMain(){
       }
       return m;
     }
+    function statVec(v){ const out=new Array(statCount).fill(0); if(Array.isArray(v)){ for(let k=0;k<statCount;k++){ const x=Number(v[k]); out[k]=Number.isFinite(x)&&x>0?x:0; } } return out; }
+    function sumRatesProduct(stats,rates){ let s=0; for(let k=0;k<statCount;k++) s += stats[k]*(rates[k]||0)/100; return s; }
+    // 数值规范化串：stats/rates/value/bonusKind 参与分组签名与哈希种子。
+    function itemNumericSignature(t){ return `${t.value}|${t.bonusKind}|${(t.stats||[]).join(',')}|${(t.rates||[]).join(',')}`; }
+    // 每件物品的分项基础值/加成率在接收数据时一次性预计算（sv/rv），热路径直接读取，避免重复分配。
     const items = data.items.map((t,itemIndex)=>({
       ...t,
       itemIndex,
+      sv:statVec(t.stats),
+      rv:statVec(t.rates),
       placements:t.placements.map((p,placementIndex)=>({
         ...p,
         itemIndex,
@@ -63,15 +70,10 @@ function solverWorkerMain(){
     }));
 
     function areAdjacent(a,b){ return (a.neighborMask & b.mask) !== 0n; }
-    // 分项基础值/加成率（按 bonusStats 顺序的数组）。缺失时补零，保证标量与分项一致。
-    function statVec(v){ const out=new Array(statCount).fill(0); if(Array.isArray(v)){ for(let k=0;k<statCount;k++){ const x=Number(v[k]); out[k]=Number.isFinite(x)&&x>0?x:0; } } return out; }
-    function sumRatesProduct(stats,rates){ let s=0; for(let k=0;k<statCount;k++) s += stats[k]*(rates[k]||0)/100; return s; }
-    // 数值规范化串：stats/rates/value/bonusKind 参与分组签名与哈希种子。
-    function itemNumericSignature(t){ return `${t.value}|${t.bonusKind}|${(t.stats||[]).join(',')}|${(t.rates||[]).join(',')}`; }
     function pairBonusEvents(a,b){
       if(!areAdjacent(a,b)) return [];
       const events = [];
-      const aStats=statVec(a.stats), aRates=statVec(a.rates), bStats=statVec(b.stats), bRates=statVec(b.rates);
+      const aStats=a.sv, aRates=a.rv, bStats=b.sv, bRates=b.rv;
       // provider：提升相邻法宝，bonus = Σ 目标.stats[k] × 源.rates[k]/100
       if(a.bonusKind === 'provider'){
         const bonus=sumRatesProduct(bStats,aRates);
@@ -90,7 +92,8 @@ function solverWorkerMain(){
         const bonus=sumRatesProduct(bStats,bRates);
         if(bonus>0) events.push({kind:'self_neighbor', source:b.no, sourceName:b.itemName, target:b.no, targetName:b.itemName, neighbor:a.no, neighborName:a.itemName, base:b.value, bonus, statBreakdown:bStats.map((v,k)=>v*bRates[k]/100)});
       }
-      return events.filter(x=>x.bonus>0);
+      // 四处 push 均已带 bonus>0 守卫，无需再过滤。
+      return events;
     }
     function adjacencyGainFor(p, placed){
       const out = {bonus:0, events:[]};
@@ -101,7 +104,7 @@ function solverWorkerMain(){
     }
     function potentialPairBonus(a,b){
       let bonus=0;
-      const aStats=statVec(a.stats), aRates=statVec(a.rates), bStats=statVec(b.stats), bRates=statVec(b.rates);
+      const aStats=a.sv, aRates=a.rv, bStats=b.sv, bRates=b.rv;
       if(a.bonusKind==='provider') bonus += sumRatesProduct(bStats,aRates);
       if(b.bonusKind==='provider') bonus += sumRatesProduct(aStats,bRates);
       if(a.bonusKind==='self') bonus += sumRatesProduct(aStats,aRates);
@@ -159,6 +162,8 @@ function solverWorkerMain(){
         value:item.value,
         stats:item.stats || [],
         rates:item.rates || [],
+        sv:item.sv || [],
+        rv:item.rv || [],
         bonusKind:item.bonusKind,
         priorityTier:item.priorityTier,
         customPriority:item.customPriority,
@@ -172,7 +177,7 @@ function solverWorkerMain(){
     // 这样同形状物品不会因为属性不同而把几何搜索空间重复拆开。
     function geometryGroupKey(t){
       const masks = t.placements.map(p=>p.mask.toString()).sort().join(',');
-      return [masks,t.area,itemNumericSignature(t),t.priorityTier,t.manualOrder,t.customPriority===null?'':t.customPriority].join('|');
+      return [masks,t.area,t.priorityTier,t.manualOrder,t.customPriority===null?'':t.customPriority].join('|');
     }
     // 无法全部装入时仍需决定取舍，因此部分装入阶段保留原来的完整评分签名。
     function detailedGroupKey(t){

@@ -1,4 +1,4 @@
-// ui-result.js —— 求解结果渲染：摆放网格/统计文本/重点邻接摘要/加成事件行。加载顺序 8/12，依赖 utils、talisman-model。
+// ui-result.js —— 求解结果渲染：摆放网格/统计文本/重点邻接摘要/加成事件行。加载顺序 9/13，依赖 utils、talisman-model。
 'use strict';
 
 function renderResultGrid(best){

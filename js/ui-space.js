@@ -1,4 +1,4 @@
-// ui-space.js —— 背包空间卡片：尺寸应用与格子网格渲染。加载顺序 5/12，依赖 state。
+// ui-space.js —— 背包空间卡片：尺寸应用与格子网格渲染。加载顺序 6/13，依赖 state。
 'use strict';
 
 function applySize(){
