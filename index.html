@@ -426,7 +426,6 @@
 <script>
 'use strict';
 
-const COLORS = ['#93c5fd','#86efac','#fca5a5','#fdba74','#c4b5fd','#67e8f9','#f9a8d4','#fde68a','#bef264','#d8b4fe','#a7f3d0','#f0abfc','#bfdbfe','#fecaca','#bbf7d0','#ddd6fe','#bae6fd','#bbf7d0','#fed7aa','#e9d5ff'];
 const QUALITY_OPTIONS = [
   {id:'green', name:'绿'},
   {id:'blue', name:'蓝'},
@@ -463,7 +462,6 @@ const SELF_PRIORITY_TIERS = [
   {id:'four_blue', label:'蓝色四格'},
   {id:'four_green', label:'绿色四格'}
 ];
-const PRIORITY_SEARCH_WEIGHT = [1000000, 100000, 10000, 1000, 100, 10];
 let W = 7, H = 6;
 let active = [];
 let itemDefs = [];
@@ -785,8 +783,8 @@ function qualitySelectHtml(idx, value, scope, disabled=false, area=1){
 }
 
 function applySize(){
-  const newW = Math.max(1, Math.min(7, Number(document.getElementById('gridW').value)||7));
-  const newH = Math.max(1, Math.min(6, Number(document.getElementById('gridH').value)||6));
+  const newW = Math.max(1, Math.min(7, Math.floor(Number(document.getElementById('gridW').value)) || 1));
+  const newH = Math.max(1, Math.min(6, Math.floor(Number(document.getElementById('gridH').value)) || 1));
   document.getElementById('gridW').value = newW;
   document.getElementById('gridH').value = newH;
   const old = active;
@@ -852,7 +850,9 @@ function renderItemsTable(){
     btn.addEventListener('click', e=>{
       const i = Number(e.currentTarget.dataset.add);
       const countInput = tbody.querySelector(`input[data-add-count="${i}"]`);
-      const count = Math.max(1, Math.floor(Number(countInput.value)||1));
+      const rawCount = Math.max(1, Math.floor(Number(countInput.value)||1));
+      const count = Math.min(rawCount, 200);
+      if(rawCount > 200) alert('单次添加数量已限制为 200');
       addToInventory(i, count);
     });
   });
@@ -983,32 +983,6 @@ function selfPriorityTier(it){
   if(area === 4 && quality === 'blue') return 4;
   if(area === 4 && quality === 'green') return 5;
   return -1;
-}
-function emptyPriorityVector(){ return Array(SELF_PRIORITY_TIERS.length).fill(0); }
-function addPriorityVectors(a,b){ return a.map((v,i)=>v+(b[i]||0)); }
-function comparePriorityVectors(a,b){
-  for(let i=0;i<SELF_PRIORITY_TIERS.length;i++){
-    const d = (a[i]||0) - (b[i]||0);
-    if(d !== 0) return d;
-  }
-  return 0;
-}
-function weightedPriority(v){ return v.reduce((sum,x,i)=>sum+(x||0)*PRIORITY_SEARCH_WEIGHT[i],0); }
-function priorityGainFor(newPlacement, existingPlacements){
-  const vector = emptyPriorityVector();
-  const links = [];
-  for(const old of existingPlacements){
-    if(!areAdjacent(newPlacement.cells, old.cells)) continue;
-    if(newPlacement.priorityTier >= 0){
-      vector[newPlacement.priorityTier]++;
-      links.push({target:newPlacement.no, targetName:newPlacement.itemName, neighbor:old.no, neighborName:old.itemName, tier:newPlacement.priorityTier});
-    }
-    if(old.priorityTier >= 0){
-      vector[old.priorityTier]++;
-      links.push({target:old.no, targetName:old.itemName, neighbor:newPlacement.no, neighborName:newPlacement.itemName, tier:old.priorityTier});
-    }
-  }
-  return {vector, links, weighted:weightedPriority(vector)};
 }
 
 function addToInventory(defIndex, count){
@@ -1165,7 +1139,7 @@ function renderReplacementResult(){
   if(!replacementResult){box.textContent='尚未计算。';return;}
   const added=replacementResult.added.map(x=>`${x.name}（${x.cells.length}格）`).join('、')||'无';
   const removed=replacementResult.removed.map(x=>`${x.name}（${x.cells.length}格）`).join('、')||'无';
-  box.textContent=`可行方案\n加入：${added}\n移除：${removed}\n候选总占格：${replacementResult.addedArea}\n移除物品：${replacementResult.removed.length} 件，共 ${replacementResult.removedArea} 格`;
+  box.textContent=`可行方案\n加入：${added}\n移除：${removed}\n候选总占格：${replacementResult.addedArea}\n移除物品：${replacementResult.removed.length} 件，共 ${replacementResult.removedArea} 格`+(replacementResult.truncated?'\n（注意：本次搜索已按时间/规模截断，结果可能不完整。）':'');
 }
 
 function renderSemiAutoRecognition(){
@@ -1358,7 +1332,7 @@ async function readRecognitionClipboard(){
     }
     alert('剪贴板里没有图片。');
   }catch(err){
-    alert(`读取剪贴板失败：${err.message || '未知错误'}`);
+    alert('剪贴板读取失败(浏览器权限限制)，请按 Ctrl+V 粘贴截图');
   }
 }
 
@@ -2266,21 +2240,28 @@ function solveReplacementPlan(){
   },true));
   if(!candidates.length){alert('请先确认至少一件合法候选法宝。');return;}
   if(!inventory.length){alert('请先把识别到的背包物品导入已有物品清单。');return;}
+  const budget={deadline:Date.now()+8000, comboCount:0, limit:200000, truncated:false};
+  if(candidates.length>24){candidates.sort((a,b)=>b.cells.length-a.cells.length);candidates.length=24;budget.truncated=true;}
   const candidateSets=[];
   for(let mask=1;mask<(1<<candidates.length);mask++){
+    if(candidateSets.length>=budget.limit||Date.now()>budget.deadline){budget.truncated=true;break;}
     const added=candidates.filter((_,i)=>(mask&(1<<i))!==0);
     candidateSets.push({added,addedArea:added.reduce((s,x)=>s+x.cells.length,0)});
   }
   candidateSets.sort((a,b)=>b.addedArea-a.addedArea||b.added.length-a.added.length);
   let best=null;
+  outer:
   for(const set of candidateSets){
+    if(budget.truncated||Date.now()>budget.deadline){budget.truncated=true;break;}
     if(best&&(set.addedArea<best.addedArea||(set.addedArea===best.addedArea&&set.added.length<best.added.length))) break;
     const largest=Math.max(...set.added.map(x=>x.cells.length));
-    const removable=inventory.filter(x=>x.cells.length<largest);
+    let removable=inventory.filter(x=>x.cells.length<largest);
+    removable.sort((a,b)=>b.cells.length-a.cells.length);
+    if(removable.length>12) removable=removable.slice(0,12);
     const required=Math.max(0,inventory.reduce((s,x)=>s+x.cells.length,0)+set.addedArea-countActiveCells());
     for(let count=0;count<=removable.length;count++){
       if(best&&set.addedArea===best.addedArea&&set.added.length===best.added.length&&count>best.removed.length) break;
-      const subsets=combinationsOfSize(removable,count).filter(list=>list.reduce((s,x)=>s+x.cells.length,0)>=required);
+      const subsets=combinationsOfSize(removable,count,budget).filter(list=>list.reduce((s,x)=>s+x.cells.length,0)>=required);
       for(const removed of subsets){
         const removedIds=new Set(removed.map(x=>x.uid));
         const kept=inventory.filter(x=>!removedIds.has(x.uid));
@@ -2289,11 +2270,13 @@ function solveReplacementPlan(){
         const plan={added:set.added,removed,kept,placements:packed,addedArea:set.addedArea,removedArea:removed.reduce((s,x)=>s+x.cells.length,0),finalValue:kept.concat(set.added).reduce((s,x)=>s+Math.max(0,Number(x.value)||0),0)};
         if(!best||compareReplacementPlans(plan,best)>0) best=plan;
       }
+      if(budget.truncated||Date.now()>budget.deadline){budget.truncated=true;break outer;}
     }
   }
   replacementResult=best;
+  if(best) best.truncated=budget.truncated;
   if(!best){
-    document.getElementById('replacementResult').textContent='没有找到符合“大件换小件”限制的可行方案。可取消部分候选，或检查候选形状是否识别正确。';
+    document.getElementById('replacementResult').textContent='没有找到符合“大件换小件”限制的可行方案。可取消部分候选，或检查候选形状是否识别正确。'+(budget.truncated?'（注意：本次搜索已按时间/规模截断，结果可能不完整。）':'');
     document.getElementById('replacementApplyBtn').disabled=true;
     return;
   }
@@ -2304,10 +2287,11 @@ function countActiveCells(){
   let count=0; for(let r=0;r<H;r++) for(let c=0;c<W;c++) if(active[r][c]) count++; return count;
 }
 
-function combinationsOfSize(items,size){
+function combinationsOfSize(items,size,budget){
   const out=[];
   function visit(start,picked){
-    if(picked.length===size){out.push(picked.slice());return;}
+    if(budget&&(budget.truncated||Date.now()>budget.deadline)){budget.truncated=true;return;}
+    if(picked.length===size){out.push(picked.slice());if(budget){budget.comboCount++;if(budget.comboCount>budget.limit)budget.truncated=true;}return;}
     for(let i=start;i<=items.length-(size-picked.length);i++){picked.push(items[i]);visit(i+1,picked);picked.pop();}
   }
   visit(0,[]); return out;
@@ -2855,56 +2839,6 @@ function prepareInventoryItems(){
     manualPriorityLevels,
     manualItems:manualItems.map(t=>({no:t.no,name:t.name,priority:t.customPriority,order:t.manualOrder}))
   };
-}
-
-function areAdjacent(cellsA, cellsB){
-  const bset = new Set(cellsB.map(([r,c])=>`${r},${c}`));
-  for(const [r,c] of cellsA){
-    if(bset.has(`${r-1},${c}`) || bset.has(`${r+1},${c}`) || bset.has(`${r},${c-1}`) || bset.has(`${r},${c+1}`)) return true;
-  }
-  return false;
-}
-function pairBonusEvents(a, b){
-  if(!areAdjacent(a.cells, b.cells)) return [];
-  const events = [];
-  if(a.bonusKind === 'provider' && a.bonusRate > 0){
-    events.push({kind:'single_provider', source:a.no, sourceName:a.itemName, target:b.no, targetName:b.itemName, rate:a.bonusRate, base:b.value, bonus:b.value*a.bonusRate/100});
-  }
-  if(b.bonusKind === 'provider' && b.bonusRate > 0){
-    events.push({kind:'single_provider', source:b.no, sourceName:b.itemName, target:a.no, targetName:a.itemName, rate:b.bonusRate, base:a.value, bonus:a.value*b.bonusRate/100});
-  }
-  if(a.bonusKind === 'self' && a.bonusRate > 0){
-    events.push({kind:'self_neighbor', source:a.no, sourceName:a.itemName, target:a.no, targetName:a.itemName, neighbor:b.no, neighborName:b.itemName, rate:a.bonusRate, base:a.value, bonus:a.value*a.bonusRate/100});
-  }
-  if(b.bonusKind === 'self' && b.bonusRate > 0){
-    events.push({kind:'self_neighbor', source:b.no, sourceName:b.itemName, target:b.no, targetName:b.itemName, neighbor:a.no, neighborName:a.itemName, rate:b.bonusRate, base:b.value, bonus:b.value*b.bonusRate/100});
-  }
-  return events.filter(e=>e.bonus > 0);
-}
-function adjacencyGainFor(newPlacement, existingPlacements){
-  const gain = {bonus:0, events:[]};
-  for(const old of existingPlacements){
-    const events = pairBonusEvents(newPlacement, old);
-    for(const ev of events){ gain.bonus += ev.bonus; gain.events.push(ev); }
-  }
-  return gain;
-}
-function potentialPairBonus(itemA, itemB){
-  const a = {cells:[[0,0]], no:itemA.no, itemName:itemA.name, value:itemA.value, bonusRate:itemA.bonusRate, bonusKind:itemA.bonusKind};
-  const b = {cells:[[0,1]], no:itemB.no, itemName:itemB.name, value:itemB.value, bonusRate:itemB.bonusRate, bonusKind:itemB.bonusKind};
-  return pairBonusEvents(a,b).reduce((s,e)=>s+e.bonus,0);
-}
-function maxPossibleBonus(items){
-  let total = 0;
-  for(let i=0;i<items.length;i++) for(let j=i+1;j<items.length;j++) total += potentialPairBonus(items[i], items[j]);
-  return total;
-}
-function potentialByItem(items){
-  const arr = Array(items.length).fill(0);
-  for(let i=0;i<items.length;i++){
-    for(let j=0;j<items.length;j++) if(i!==j) arr[i] += potentialPairBonus(items[i], items[j]);
-  }
-  return arr;
 }
 
 
@@ -4242,7 +4176,12 @@ function saveConfig(){
     allowMirror:document.getElementById('allowMirror').checked,
     useAdjacencyBonus:document.getElementById('useAdjacencyBonus').checked
   };
-  localStorage.setItem('bagSolverConfig', JSON.stringify(data));
+  try{
+    localStorage.setItem('bagSolverConfig', JSON.stringify(data));
+  }catch(e){
+    alert('保存失败：浏览器本地存储不可用或已满。');
+    return;
+  }
   alert('已保存到浏览器本地存储。');
 }
 function loadConfig(){
@@ -4250,8 +4189,14 @@ function loadConfig(){
   if(!raw){ alert('没有找到已保存配置。'); return; }
   try{
     const data = JSON.parse(raw);
-    W = data.W || 7; H = data.H || 6;
-    active = data.active || Array.from({length:H},()=>Array(W).fill(true));
+    W = Math.max(1, Math.min(7, Number(data.W)||7));
+    H = Math.max(1, Math.min(6, Number(data.H)||6));
+    active = data.active;
+    if(!Array.isArray(active) || active.length !== H || active.some(row=>!Array.isArray(row) || row.length !== W)){
+      active = Array.from({length:H},()=>Array(W).fill(true));
+    }else{
+      active = active.map(row=>row.map(v=>v !== false && !!v));
+    }
     itemDefs = data.itemDefs ? cloneItems(data.itemDefs) : cloneItems(DEFAULT_ITEMS);
     if(Array.isArray(data.inventory)){
       inventory = data.inventory.map(x=>normalizeItemRecord({...x, cells:cloneCells(x.cells || [])}, true));
@@ -4276,10 +4221,11 @@ function exportResult(){
   const data = lastResult || {message:'尚未计算结果', W, H, active, itemDefs, inventory};
   const blob = new Blob([JSON.stringify(data, (k,v)=> typeof v === 'bigint' ? v.toString() : v, 2)], {type:'application/json;charset=utf-8'});
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(blob);
+  a.href = url;
   a.download = 'bag-solver-result.json';
   a.click();
-  URL.revokeObjectURL(a.href);
+  setTimeout(()=>URL.revokeObjectURL(url), 10000);
 }
 function escapeHtml(s){ return String(s).replace(/[&<>\"]/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])); }
 function escapeAttr(s){ return escapeHtml(s).replace(/'/g,'&#39;'); }
