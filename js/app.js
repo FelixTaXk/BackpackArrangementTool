@@ -1,12 +1,13 @@
-// app.js —— init 与全局事件绑定，文件末尾调用 init()。加载顺序 12/12，依赖全部模块。
+// app.js —— init 与全局事件绑定，文件末尾调用 init()。加载顺序 13/13，依赖全部模块。
 'use strict';
 
 function init(){
+  validateTalismanDB();
   active = Array.from({length:6},()=>Array(7).fill(true));
-  itemDefs = cloneItems(DEFAULT_ITEMS);
+  itemDefs = buildItemDefs();
   configureWorkerCountControl();
   bindEvents();
-  renderQualitySelect(document.getElementById('customQuality'), 'green', false, 1);
+  initLibraryFilter();
   renderSpaceGrid();
   renderItemsTable();
   renderInventoryTable();
@@ -29,13 +30,13 @@ function bindEvents(){
     renderResultGrid(null);
   });
   document.getElementById('resetItemsBtn').addEventListener('click', ()=>{
-    itemDefs = cloneItems(DEFAULT_ITEMS);
+    itemDefs = buildItemDefs();
     renderItemsTable();
   });
-  document.getElementById('addCustomBtn').addEventListener('click', addCustomItem);
+  document.getElementById('libraryFilterAttribute').addEventListener('change', renderItemsTable);
   document.getElementById('renumberBtn').addEventListener('click', renumberInventory);
   document.getElementById('clearInventoryBtn').addEventListener('click', ()=>{
-    if(confirm('确定清空已有物品清单？')){
+    if(confirm('确定清空已有法宝清单？')){
       inventory = [];
       nextItemNo = 1;
       lastResult = null;
@@ -47,9 +48,6 @@ function bindEvents(){
   document.getElementById('cancelSolveBtn').addEventListener('click', cancelSolve);
   document.getElementById('parallelSearch').addEventListener('change', e=>{
     document.getElementById('workerCountLabel').hidden=!e.target.checked;
-  });
-  document.querySelectorAll('[data-column-toggle]').forEach(toggle=>{
-    toggle.addEventListener('change', e=>setOptionalColumnVisible(e.target.dataset.columnToggle,e.target.checked));
   });
   document.getElementById('searchMode').addEventListener('change', e=>{
     const deep=e.target.value==='deep';
@@ -70,13 +68,6 @@ function bindEvents(){
   document.getElementById('allowMirror').addEventListener('change', ()=>{
     lastResult = null;
     renderResultGrid(null);
-  });
-  document.getElementById('customQuality').addEventListener('change', e=>{
-    const q = e.target.value;
-    const cells = parsePattern(document.getElementById('customPattern').value || '#');
-    const area = cells.length || 1;
-    document.getElementById('customValue').value = qualityValue(q, area);
-    document.getElementById('customBonusRate').value = defaultBonusRate(area, q, false);
   });
 }
 

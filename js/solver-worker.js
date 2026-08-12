@@ -15,13 +15,14 @@ function solverWorkerMain(){
     const defaultTierCount = Number(data.defaultTierCount)||0;
     const requiredTotalItems = Math.max(0, Number(data.requiredTotalItems)||0);
     const skippedCount = Math.max(0, Number(data.skippedCount)||0);
+    const statCount = Math.max(0, Number(data.statCount)||0);
     const started = performance.now();
     const hardDeadline = started + timeLimit;
     let rngState = (0x9e3779b9 ^ itemsHashSeed(data.items || []) ^ activeCells ^ nodeLimit ^ (Number(data.seedOffset)||0)) >>> 0;
     function itemsHashSeed(rawItems){
       let h=2166136261>>>0;
       for(const t of rawItems){
-        const text=`${t.no}|${t.area}|${t.value}|${t.bonusRate}|${t.bonusKind}|${t.customPriority ?? ''}`;
+        const text=`${t.no}|${t.area}|${t.value}|${itemNumericSignature(t)}|${t.customPriority ?? ''}`;
         for(let i=0;i<text.length;i++){ h^=text.charCodeAt(i); h=Math.imul(h,16777619)>>>0; }
       }
       return h>>>0;
@@ -62,20 +63,32 @@ function solverWorkerMain(){
     }));
 
     function areAdjacent(a,b){ return (a.neighborMask & b.mask) !== 0n; }
+    // 分项基础值/加成率（按 bonusStats 顺序的数组）。缺失时补零，保证标量与分项一致。
+    function statVec(v){ const out=new Array(statCount).fill(0); if(Array.isArray(v)){ for(let k=0;k<statCount;k++){ const x=Number(v[k]); out[k]=Number.isFinite(x)&&x>0?x:0; } } return out; }
+    function sumRatesProduct(stats,rates){ let s=0; for(let k=0;k<statCount;k++) s += stats[k]*(rates[k]||0)/100; return s; }
+    // 数值规范化串：stats/rates/value/bonusKind 参与分组签名与哈希种子。
+    function itemNumericSignature(t){ return `${t.value}|${t.bonusKind}|${(t.stats||[]).join(',')}|${(t.rates||[]).join(',')}`; }
     function pairBonusEvents(a,b){
       if(!areAdjacent(a,b)) return [];
       const events = [];
-      if(a.bonusKind === 'provider' && a.bonusRate > 0){
-        events.push({kind:'single_provider', source:a.no, sourceName:a.itemName, target:b.no, targetName:b.itemName, rate:a.bonusRate, base:b.value, bonus:b.value*a.bonusRate/100});
+      const aStats=statVec(a.stats), aRates=statVec(a.rates), bStats=statVec(b.stats), bRates=statVec(b.rates);
+      // provider：提升相邻法宝，bonus = Σ 目标.stats[k] × 源.rates[k]/100
+      if(a.bonusKind === 'provider'){
+        const bonus=sumRatesProduct(bStats,aRates);
+        if(bonus>0) events.push({kind:'single_provider', source:a.no, sourceName:a.itemName, target:b.no, targetName:b.itemName, base:b.value, bonus, statBreakdown:bStats.map((v,k)=>v*aRates[k]/100)});
       }
-      if(b.bonusKind === 'provider' && b.bonusRate > 0){
-        events.push({kind:'single_provider', source:b.no, sourceName:b.itemName, target:a.no, targetName:a.itemName, rate:b.bonusRate, base:a.value, bonus:a.value*b.bonusRate/100});
+      if(b.bonusKind === 'provider'){
+        const bonus=sumRatesProduct(aStats,bRates);
+        if(bonus>0) events.push({kind:'single_provider', source:b.no, sourceName:b.itemName, target:a.no, targetName:a.itemName, base:a.value, bonus, statBreakdown:aStats.map((v,k)=>v*bRates[k]/100)});
       }
-      if(a.bonusKind === 'self' && a.bonusRate > 0){
-        events.push({kind:'self_neighbor', source:a.no, sourceName:a.itemName, target:a.no, targetName:a.itemName, neighbor:b.no, neighborName:b.itemName, rate:a.bonusRate, base:a.value, bonus:a.value*a.bonusRate/100});
+      // self：提升自己，bonus = Σ 自身.stats[k] × 自身.rates[k]/100（每相邻一个不同法宝一次）
+      if(a.bonusKind === 'self'){
+        const bonus=sumRatesProduct(aStats,aRates);
+        if(bonus>0) events.push({kind:'self_neighbor', source:a.no, sourceName:a.itemName, target:a.no, targetName:a.itemName, neighbor:b.no, neighborName:b.itemName, base:a.value, bonus, statBreakdown:aStats.map((v,k)=>v*aRates[k]/100)});
       }
-      if(b.bonusKind === 'self' && b.bonusRate > 0){
-        events.push({kind:'self_neighbor', source:b.no, sourceName:b.itemName, target:b.no, targetName:b.itemName, neighbor:a.no, neighborName:a.itemName, rate:b.bonusRate, base:b.value, bonus:b.value*b.bonusRate/100});
+      if(b.bonusKind === 'self'){
+        const bonus=sumRatesProduct(bStats,bRates);
+        if(bonus>0) events.push({kind:'self_neighbor', source:b.no, sourceName:b.itemName, target:b.no, targetName:b.itemName, neighbor:a.no, neighborName:a.itemName, base:b.value, bonus, statBreakdown:bStats.map((v,k)=>v*bRates[k]/100)});
       }
       return events.filter(x=>x.bonus>0);
     }
@@ -88,10 +101,11 @@ function solverWorkerMain(){
     }
     function potentialPairBonus(a,b){
       let bonus=0;
-      if(a.bonusKind==='provider' && a.bonusRate>0) bonus += b.value*a.bonusRate/100;
-      if(b.bonusKind==='provider' && b.bonusRate>0) bonus += a.value*b.bonusRate/100;
-      if(a.bonusKind==='self' && a.bonusRate>0) bonus += a.value*a.bonusRate/100;
-      if(b.bonusKind==='self' && b.bonusRate>0) bonus += b.value*b.bonusRate/100;
+      const aStats=statVec(a.stats), aRates=statVec(a.rates), bStats=statVec(b.stats), bRates=statVec(b.rates);
+      if(a.bonusKind==='provider') bonus += sumRatesProduct(bStats,aRates);
+      if(b.bonusKind==='provider') bonus += sumRatesProduct(aStats,bRates);
+      if(a.bonusKind==='self') bonus += sumRatesProduct(aStats,aRates);
+      if(b.bonusKind==='self') bonus += sumRatesProduct(bStats,bRates);
       return bonus;
     }
     function emptyManualVector(){ return Array(manualCount).fill(0); }
@@ -143,7 +157,8 @@ function solverWorkerMain(){
         area:item.area,
         quality:item.quality,
         value:item.value,
-        bonusRate:item.bonusRate,
+        stats:item.stats || [],
+        rates:item.rates || [],
         bonusKind:item.bonusKind,
         priorityTier:item.priorityTier,
         customPriority:item.customPriority,
@@ -157,16 +172,17 @@ function solverWorkerMain(){
     // 这样同形状物品不会因为属性不同而把几何搜索空间重复拆开。
     function geometryGroupKey(t){
       const masks = t.placements.map(p=>p.mask.toString()).sort().join(',');
-      return [masks,t.area,t.priorityTier,t.manualOrder,t.customPriority===null?'':t.customPriority].join('|');
+      return [masks,t.area,itemNumericSignature(t),t.priorityTier,t.manualOrder,t.customPriority===null?'':t.customPriority].join('|');
     }
     // 无法全部装入时仍需决定取舍，因此部分装入阶段保留原来的完整评分签名。
     function detailedGroupKey(t){
       const masks = t.placements.map(p=>p.mask.toString()).sort().join(',');
-      return [masks,t.area,t.quality,t.value,t.bonusRate,t.bonusKind,t.priorityTier,t.manualOrder,t.customPriority===null?'':t.customPriority].join('|');
+      return [masks,t.area,t.quality,itemNumericSignature(t),t.priorityTier,t.manualOrder,t.customPriority===null?'':t.customPriority].join('|');
     }
+    function maxRate(t){ return (t.rates||[]).reduce((m,x)=>Math.max(m,Number(x)||0),0); }
     function guideInfluence(t){
-      if(t.bonusKind==='self') return t.value*t.bonusRate;
-      if(t.bonusKind==='provider') return t.bonusRate*1000+t.value;
+      if(t.bonusKind==='self') return t.value*maxRate(t);
+      if(t.bonusKind==='provider') return maxRate(t)*1000+t.value;
       return t.value;
     }
     function buildGroups(keyFn,mode){
@@ -275,7 +291,7 @@ function solverWorkerMain(){
         placements:placements.slice(),occupied,bonusEvents,priorityLinks
       };
     }
-    function scoringSignature(t){ return [t.value,t.bonusRate,t.bonusKind,t.quality].join('|'); }
+    function scoringSignature(t){ return [itemNumericSignature(t),t.quality].join('|'); }
     function uniquePermutations(arr,limit=720){
       const out=[], used=Array(arr.length).fill(false), cur=[];
       const sorted=arr.slice().sort((a,b)=>scoringSignature(a).localeCompare(scoringSignature(b)) || a.no-b.no);
@@ -570,10 +586,18 @@ function solverWorkerMain(){
         bestTotal:best.totalScore,bestAdjacency:best.adjacencyCount,bestItems:best.itemCount,totalArea,totalItems,...extra
       });
     }
+    function buildStatTotals(){
+      const base=Array(statCount).fill(0), bonus=Array(statCount).fill(0);
+      for(const p of best.placements){ const sv=statVec(p.stats); for(let k=0;k<statCount;k++) base[k]+=sv[k]; }
+      for(const e of best.bonusEvents){ const bd=e.statBreakdown||[]; for(let k=0;k<statCount;k++) bonus[k]+=Number(bd[k])||0; }
+      return {base, bonus, total:base.map((v,k)=>v+bonus[k])};
+    }
     function serializeBest(){
       return {
         ...best,
         occupied:best.occupied.toString(),
+        statKeys:data.statKeys || [],
+        statTotals:buildStatTotals(),
         placements:best.placements.map(p=>({...p,mask:p.mask.toString(),neighborMask:p.neighborMask.toString()}))
       };
     }

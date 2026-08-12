@@ -6,10 +6,10 @@
 <title>背包排列优化工具</title>
 <link rel="stylesheet" href="css/styles.css">
 </head>
-<body class="hide-value-columns hide-bonus-rate-columns hide-add-count-column">
+<body>
 <header>
   <h1>背包排列优化工具</h1>
-  <p>严格按“完整装入 → 实际总属性 → 手动邻接优先级 → 默认邻接优先级 → 总邻接数量”优化；实际总属性等于基础属性与百分比加成之和。</p>
+  <p>严格按“完整装入 → 实际总属性 → 手动邻接优先级 → 默认邻接优先级 → 总邻接数量”优化；实际总属性 = 全部法宝各项基础属性之和 + 全部百分比加成之和。</p>
 </header>
 <main>
   <section>
@@ -31,52 +31,38 @@
     </div>
 
     <div class="card library-card">
-      <h2>2. 物品库</h2>
+      <h2>2. 法宝库</h2>
       <div class="row">
         <label><input id="allowRotate" type="checkbox"> 允许旋转</label>
         <label><input id="allowMirror" type="checkbox"> 允许镜像</label>
-        <button id="resetItemsBtn">恢复默认物品库</button>
+        <label>属性筛选 <select id="libraryFilterAttribute"><option value="">全部</option></select></label>
+        <button id="resetItemsBtn">重新加载法宝数据库</button>
       </div>
-      <div class="hint">物品库提供形状与默认参数。添加到已有物品清单后，每个实际物品仍可单独改品质、基础属性、加成率和三格受加成开关。基础属性会按物品格数与品质自动给默认值。</div>
-      <div class="hint">横屏时物品库和已有物品清单左右并排，并分别在固定高度区域内滚动；自定义物品区域默认折叠。</div>
-      <div class="column-options"><strong>显示列</strong><label><input type="checkbox" data-column-toggle="value"><span>属性值</span></label><label><input type="checkbox" data-column-toggle="bonus-rate"><span>加成率</span></label><label><input type="checkbox" data-column-toggle="add-count"><span>添加数量</span></label></div>
-      <div class="table-scroll library-scroll" aria-label="物品库列表">
+      <div class="hint">法宝的名称、形状、基础属性与加成全部来自内置数据库（用户 Excel 转换产物），不可手动修改。添加到已有法宝清单后即可参与求解。</div>
+      <div class="hint">横屏时法宝库和已有法宝清单左右并排，并分别在固定高度区域内滚动。</div>
+      <div class="table-scroll library-scroll" aria-label="法宝库列表">
         <table id="itemsTable">
-          <thead><tr><th class="col-enabled">启用</th><th class="col-name">物品</th><th class="col-shape">形状</th><th class="col-quality">品质</th><th class="col-value">默认属性</th><th class="col-bonus-rate">加成率%</th><th class="col-add-count">添加数量</th><th class="col-action">操作</th></tr></thead>
+          <thead><tr><th class="col-name">名称</th><th class="col-attribute">属性</th><th class="col-quality">品质</th><th class="col-shape">形状预览</th><th class="col-base">基础属性</th><th class="col-bonus">加成</th><th class="col-add-count">添加数量</th><th class="col-action">操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
-
-      <details class="custom-item-panel">
-        <summary>添加自定义物品到物品库</summary>
-        <div class="custom-item-panel-body">
-        <label>名称 <input id="customName" type="text" placeholder="例如：六格-Z型"></label>
-        <label>品质 <select id="customQuality"></select></label>
-        <label>基础属性 <input id="customValue" type="number" min="0" step="1" value="2"></label>
-        <label>加成率% <input id="customBonusRate" type="number" min="0" step="1" value="0"></label>
-        <textarea id="customPattern" placeholder="用 # 表示占用格，用 . 表示空格。例如：\n##.\n.##"></textarea>
-        <button id="addCustomBtn">添加到物品库</button>
-          <div class="hint">加成率含义取决于物品类型：单格为“给相邻物品提供的百分比”；绿/蓝/紫/金四格、红色五格以及开启受加成的红色三格，为“每相邻一个不同物品给自身增加的百分比”。红色四格默认加成率为0；所有红装的加成率都可手动修改，红色四格填写大于0的值后按自定义自身加成计算。</div>
-        </div>
-      </details>
     </div>
 
     <div class="card inventory-card">
-      <h2>3. 已有物品清单</h2>
+      <h2>3. 已有法宝清单</h2>
       <div class="row">
         <button id="renumberBtn">重新编号</button>
         <button id="clearInventoryBtn" class="danger">清空清单</button>
       </div>
-      <div class="hint">每个条目代表一个实际拥有的物品。三格物品是否“自身因相邻受加成”在这里逐个开关。还可填写“邻接优先级”：1 为最高，数字越小越优先；留空则按默认规则计算。</div>
-      <div class="column-options"><strong>显示列</strong><label><input type="checkbox" data-column-toggle="value"><span>属性值</span></label><label><input type="checkbox" data-column-toggle="bonus-rate"><span>加成率</span></label></div>
-      <div class="table-scroll inventory-scroll" aria-label="已有物品清单">
+      <div class="hint">每个条目代表一个实际拥有的法宝；基础属性与加成模式由数据库固定（只读）。可填写“邻接优先级”：1 为最高，数字越小越优先；留空则按默认规则计算。</div>
+      <div class="table-scroll inventory-scroll" aria-label="已有法宝清单">
         <table id="inventoryTable">
-          <thead><tr><th class="col-no">编号</th><th class="col-name">名称</th><th class="col-shape">形状</th><th class="col-quality">品质</th><th class="col-value">基础属性</th><th class="col-value col-bonus-control">加成属性</th><th class="col-bonus-rate">加成率%</th><th class="col-priority">邻接优先级</th><th class="col-action">操作</th></tr></thead>
+          <thead><tr><th class="col-no">编号</th><th class="col-name">名称</th><th class="col-attribute">属性</th><th class="col-quality">品质</th><th class="col-shape">形状</th><th class="col-base">基础属性</th><th class="col-bonus">加成模式</th><th class="col-priority">邻接优先级</th><th class="col-action">操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
       <div class="inventory-cell-summary" aria-live="polite">
-        <span>物品数量 <b id="inventoryItemTotal">0</b></span>
+        <span>法宝数量 <b id="inventoryItemTotal">0</b></span>
         <span>总格数 <b id="inventoryCellTotal">0 / 42</b></span>
         <span id="inventoryCellBalance" class="cell-balance under">还差 42 格</span>
       </div>
@@ -123,14 +109,14 @@
         <div class="result-summary">
           <div class="stats">
             <div class="stat">实际总属性<b id="statScore">-</b></div>
-            <div class="stat">基础属性<b id="statBase">-</b></div>
-            <div class="stat">百分比加成<b id="statBonus">-</b></div>
-            <div class="stat">重点物品邻接<b id="statPriority">-</b></div>
+            <div class="stat">重点法宝邻接<b id="statPriority">-</b></div>
             <div class="stat">总邻接数量<b id="statAdjacency">-</b></div>
             <div class="stat">已用格子<b id="statArea">-</b></div>
-            <div class="stat">已放物品<b id="statItems">-</b></div>
+            <div class="stat">已放法宝<b id="statItems">-</b></div>
             <div class="stat">搜索节点<b id="statNodes">-</b></div>
           </div>
+          <h3>分项统计</h3>
+          <div id="statBreakdown" class="stat-breakdown-wrap"><div class="hint">尚未计算。</div></div>
           <h3>状态</h3>
           <pre id="statusBox">尚未计算。</pre>
         </div>
@@ -141,17 +127,17 @@
       <h2>6. 使用说明</h2>
       <ol>
         <li>先设置背包宽度、高度，并点击空间格子标记已解锁区域。</li>
-        <li>从物品库添加物品到已有物品清单；真正参与计算的是已有物品清单。</li>
-        <li>在已有物品清单中逐个修改品质、基础属性、加成率；三格物品可逐个勾选“自身受加成”。</li>
-        <li>需要指定某件物品优先获得更多邻居时，在“邻接优先级”中填写数字：1 最高，数字越小越优先；留空使用默认规则。</li>
-        <li>单格物品的加成率表示：它会给每个相邻物品提供“该相邻物品基础属性 × 单格加成率”的加成。</li>
-        <li>绿、蓝、紫、金品质的四格物品以及红色五格物品：每相邻一个不同物品，就给自身增加“自身基础属性 × 加成率”的加成；红色四格默认加成率为0；所有红装均可自定义加成率，红色四格填写大于0的值后按自定义自身加成计算。</li>
-        <li>开启“自身受加成”的红色三格物品按自身邻接规则计算；未开启的三格物品不因相邻物品给自身加成。</li>
+        <li>法宝的名称、形状、属性（金木水火土雷体 7 种）、品质（绿蓝紫金红 5 种）、基础属性与加成全部来自内置数据库，不可手动修改；可用属性筛选快速查找。</li>
+        <li>从法宝库添加法宝到已有法宝清单；真正参与计算的是已有法宝清单。需要指定某件法宝优先获得更多邻居时，在“邻接优先级”中填写数字：1 最高，数字越小越优先；留空使用默认规则。</li>
+        <li>加成模式一：“提升相邻”（多为单格法宝）：给每个相邻法宝提供“相邻法宝各项基础值 × 对应加成率”的加成。</li>
+        <li>加成模式二：“提升自己”（多为多格法宝）：每相邻一个不同法宝，就按“自身各项基础值 × 对应加成率”给自身增加一次加成。</li>
+        <li>实际总属性 = 全部法宝各项基础属性之和 + 全部加成事件各项目加成之和（所有项目数值求和后作为标量参与求解比较）；统计面板按项目（伤害、生命值、防御、攻击等）分项显示基础值、加成值与合计。</li>
       </ol>
-      <p class="hint">品质基础属性按物品格数区分：单格 2/4/8/16（无红），两格 3/6/12/24（无红），三格 4/8/16/32/32，四格 5/10/20/40/56，五格仅红色 64。重点邻接与总邻接均按“相邻的不同物品”计算，同一对物品即使接触多条边也只计一次。求解比较顺序为：完整装入、实际总属性、手动邻接优先级、默认邻接优先级、总邻接数量。默认层级为红色五格、金色四格、开启自身加成的红色三格、紫/蓝/绿色四格。红色四格默认加成率为0且不进入默认重点邻接层级；填写自定义加成率后会参与实际总属性计算，如需优先获得邻居可另设手动邻接优先级。</p>
+      <p class="hint">重点邻接与总邻接均按“相邻的不同法宝”计算，同一对法宝即使接触多条边也只计一次。求解比较顺序为：完整装入、实际总属性、手动邻接优先级、默认邻接优先级、总邻接数量。默认重点档位为：红色五格、金色四格、红色三格（自身加成）、紫/蓝/绿色四格。</p>
     </div>
   </section>
 </main>
+<script src="data/talisman-db.js"></script>
 <script src="js/config.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/state.js"></script>

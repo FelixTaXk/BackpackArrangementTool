@@ -1,92 +1,112 @@
-// talisman-model.js —— 物品数据模型与规范化（品质/加成率/记录归一化）。加载顺序 4/12，依赖 config、utils。
+// talisman-model.js —— 法宝数据模型（数据库查库/记录归一化/加成摘要/默认优先级档位）。加载顺序 5/13，依赖 config、utils、state。
 'use strict';
 
-function cloneItems(src){ return src.map(x => normalizeItemRecord({...x, cells:cloneCells(x.cells), enabled:x.enabled !== false})); }
-function allowedQualitiesForArea(area){
-  if(area === 1 || area === 2) return ['green','blue','purple','gold'];
-  if(area === 3 || area === 4) return ['green','blue','purple','gold','red'];
-  if(area === 5) return ['red'];
-  return ['green','blue','purple','gold','red'];
-}
-function normalizeQualityForArea(q, area){
-  const allowed = allowedQualitiesForArea(area);
-  return allowed.includes(q) ? q : allowed[0];
-}
-function qualityValue(q, area=1){
-  const a = Number(area) || 1;
-  const table = AREA_VALUE_BY_QUALITY[a] || AREA_VALUE_BY_QUALITY[1];
-  const qq = normalizeQualityForArea(q, a);
-  return table[qq] ?? Object.values(table)[0] ?? 0;
-}
-function qualityName(q){ return (QUALITY_MAP[q] || QUALITY_MAP.green).name; }
-function qualityLabel(q, area){ return `${qualityName(q)}(${qualityValue(q, area)})`; }
-function defaultBonusRate(area, quality, threeSelfBonus){
-  const q = normalizeQualityForArea(quality, area);
-  if(area === 1) return SINGLE_RATE_BY_QUALITY[q] ?? 0;
-  if(area === 5) return 40;
-  if(area === 4) return q === 'red' ? 0 : (q === 'gold' ? 40 : 20);
-  if(area === 3 && threeSelfBonus) return 20;
-  return 0;
-}
-function normalizeItemRecord(item, keepManualRate=false){
-  const area = item.cells ? item.cells.length : 0;
-  let threeSelfBonus = !!item.threeSelfBonus;
-  let quality = normalizeQualityForArea(item.quality || 'green', area);
-  if(area === 5) quality = 'red';
-  if(area === 3 && threeSelfBonus) quality = 'red';
-  let value = Number(item.value);
-  if(!Number.isFinite(value) || value <= 0) value = qualityValue(quality, area);
-  let customPriority = item.customPriority;
+const QUALITY_NAME_TO_ID = {绿:'green', 蓝:'blue', 紫:'purple', 金:'gold', 红:'red'};
+
+// 清单 / 法宝库记录统一按 talisman id 查库重建；数值全部来自数据库，不允许自定义。
+function normalizeItemRecord(item){
+  const rec = item && typeof item === 'object' ? item : {};
+  const def = rec.id ? talismanById(rec.id) : null;
+  if(!def) return null;
+  let customPriority = rec.customPriority;
   if(customPriority === '' || customPriority === null || customPriority === undefined || !Number.isFinite(Number(customPriority))){
     customPriority = null;
   }else{
     customPriority = Math.max(1, Math.min(99, Math.floor(Number(customPriority))));
   }
-  let bonusRate = Number(item.bonusRate);
-  if(!keepManualRate || !Number.isFinite(bonusRate) || bonusRate < 0) bonusRate = defaultBonusRate(area, quality, threeSelfBonus);
-  // 红色装备保留用户填写的加成率，不再强制改回 0%、20% 或 40%。
-  // 红色三格是否生效仍由“自身受加成”开关控制；红色四格默认 0%，填写大于 0 的值时按自定义自身加成计算。
-  const canStoreCustomRedRate = quality === 'red' && (area === 3 || area === 4 || area === 5);
-  if(!canStoreCustomRedRate && area !== 1 && area !== 4 && area !== 5 && !(area === 3 && threeSelfBonus)) bonusRate = 0;
-  return {...item, cells:normalizeCells(item.cells || []), quality, value, bonusRate, threeSelfBonus, customPriority, enabled:item.enabled !== false};
+  return {
+    uid: rec.uid || ('inv-' + Date.now() + '-' + Math.random().toString(16).slice(2)),
+    no: Number(rec.no) || 0,
+    id: def.id,
+    name: def.name,
+    cells: normalizeCells(def.cells),
+    attribute: def.attribute,
+    quality: def.quality,
+    baseStats: {...def.baseStats},
+    bonusMode: def.bonusMode,
+    bonusRates: {...def.bonusRates},
+    customPriority,
+    // 预折算标量（Σ baseStats），供求解器比较与剪枝使用；分项明细见 baseStats。
+    value: Object.values(def.baseStats).reduce((s,v)=>s + Number(v), 0)
+  };
 }
+
+function talismanById(id){
+  const db = typeof window !== 'undefined' ? window.TALISMAN_DB : null;
+  if(!db || !Array.isArray(db.talismans)) return null;
+  return db.talismans.find(t=>t.id === id) || null;
+}
+function buildItemDefs(){
+  const db = window.TALISMAN_DB;
+  return (db && Array.isArray(db.talismans) ? db.talismans : []).map(t=>normalizeItemRecord({id:t.id, uid:'def-' + t.id, no:0})).filter(Boolean);
+}
+
+// 品质展示（数据库中品质为中文名，转为内部 id 后使用既有配色）。
+function qualityName(q){ return (QUALITY_MAP[QUALITY_NAME_TO_ID[q] || q] || {name:q}).name; }
+function qualityLabel(q){ return qualityName(q); }
+
+// 加成模式直接由数据库字段决定；求解器 placement 携带 bonusKind 字段，同样兼容。
 function bonusKind(it){
-  const area = Number(it && it.area) || (it && it.cells ? it.cells.length : 0);
-  const quality = (it && it.quality) || 'green';
-  const rate = Math.max(0, Number(it && it.bonusRate) || 0);
-  if(area === 1) return 'provider';
-  // 红色四格默认加成率为 0；用户手动填写大于 0 的值时，按自定义自身加成参与计算。
-  if(area === 4 && quality === 'red') return rate > 0 ? 'self' : 'none';
-  if((area === 4 && quality !== 'red') || area === 5 || (area === 3 && it.threeSelfBonus)) return 'self';
-  return 'none';
+  const mode = it && (it.bonusMode || it.bonusKind);
+  return mode === 'provider' ? 'provider' : mode === 'self' ? 'self' : 'none';
 }
-function bonusControlHtml(it, idx){
-  const area = it.cells.length;
-  if(area === 1) return '<span class="pill green">单格：给相邻物品</span>';
-  if(area === 4 && it.quality === 'red') return Number(it.bonusRate)>0 ? '<span class="pill">红色四格：自定义自身加成</span>' : '<span class="pill gray">红色四格：默认无加成，可自定义</span>';
-  if(area === 4) return '<span class="pill">四格：自身受加成</span>';
-  if(area === 5) return '<span class="pill">五格：红色自身受加成</span>';
-  if(area === 3) return `<label style="margin:0"><input type="checkbox" data-inv-k="threeSelfBonus" data-i="${idx}" ${it.threeSelfBonus?'checked':''}> 自身受加成</label>`;
+function bonusModeName(mode){ return mode === 'provider' ? '提升相邻' : mode === 'self' ? '提升自己' : '无'; }
+function statName(k){
+  const s = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).find(x=>x.id === k);
+  return s ? s.name : k;
+}
+function baseStatsSummary(it){
+  if(it.baseStats && Object.keys(it.baseStats).length){
+    const keys = Object.keys(it.baseStats).filter(k=>Number(it.baseStats[k]) > 0);
+    return keys.length ? keys.map(k=>`${statName(k)}${formatNum(it.baseStats[k])}`).join(' ') : '-';
+  }
+  if(Array.isArray(it.stats)){
+    const ids = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id);
+    const parts = it.stats.map((v,k)=>Number(v) > 0 ? `${statName(ids[k] || ('stat' + k))}${formatNum(v)}` : null).filter(Boolean);
+    return parts.length ? parts.join(' ') : '-';
+  }
+  return '-';
+}
+function bonusRatesSummary(it){
+  if(it.bonusRates && Object.keys(it.bonusRates).length){
+    const keys = Object.keys(it.bonusRates).filter(k=>Number(it.bonusRates[k]) > 0);
+    return keys.length ? keys.map(k=>`${statName(k)}${formatNum(it.bonusRates[k])}%`).join(' ') : '';
+  }
+  if(Array.isArray(it.rates)){
+    const ids = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id);
+    return it.rates.map((v,k)=>Number(v) > 0 ? `${statName(ids[k] || ('stat' + k))}${formatNum(v)}%` : null).filter(Boolean).join(' ');
+  }
+  return '';
+}
+function bonusControlHtml(it){
+  const kind = bonusKind(it);
+  if(kind === 'provider') return `<span class="pill green">提升相邻</span> <span class="hint">${escapeHtml(bonusRatesSummary(it))}</span>`;
+  if(kind === 'self') return `<span class="pill">提升自己</span> <span class="hint">${escapeHtml(bonusRatesSummary(it))}</span>`;
   return '<span class="pill gray">无</span>';
 }
 function bonusDescription(it){
   const kind = bonusKind(it);
-  if(kind === 'provider') return `单格提供：相邻目标 × ${formatNum(it.bonusRate)}%`;
-  if(kind === 'self') return `自身受加成：自身 × ${formatNum(it.bonusRate)}% / 相邻物品`;
+  if(kind === 'provider') return `提升相邻：${bonusRatesSummary(it)}（目标基础值 × 加成率）`;
+  if(kind === 'self') return `提升自己：${bonusRatesSummary(it)}（自身基础值 × 加成率，每相邻一个不同法宝一次）`;
   return '无加成属性';
 }
 
+// 邻接优先级默认档位：优先读取数据库 priorityTier；缺省按“品质+格数”映射，
+// 与旧档序等价：红五格 > 金四格 > 红三格self > 紫四 > 蓝四 > 绿四。
+const DEFAULT_TIER_COUNT = 6;
+const DEFAULT_TIER_LABELS = ['红色五格','金色四格','红色三格（自身加成）','紫色四格','蓝色四格','绿色四格'];
+function defaultPriorityTierLabel(tier){ return DEFAULT_TIER_LABELS[tier] || `默认档位 ${tier + 1}`; }
 function selfPriorityTier(it){
-  const area = Number(it.area ?? (it.cells ? it.cells.length : 0));
-  const quality = it.quality || 'green';
   const kind = it.bonusKind || bonusKind(it);
   if(kind !== 'self') return -1;
-  if(area === 5 && quality === 'red') return 0;
-  if(area === 4 && quality === 'gold') return 1;
-  if(area === 3 && quality === 'red') return 2;
-  if(area === 4 && quality === 'purple') return 3;
-  if(area === 4 && quality === 'blue') return 4;
-  if(area === 4 && quality === 'green') return 5;
+  if(Number.isInteger(it.priorityTier) && it.priorityTier >= 0) return it.priorityTier;
+  const area = Number(it.area ?? (it.cells ? it.cells.length : 0));
+  const q = QUALITY_NAME_TO_ID[it.quality] || it.quality;
+  if(area === 5 && q === 'red') return 0;
+  if(area === 4 && q === 'gold') return 1;
+  if(area === 3 && q === 'red') return 2;
+  if(area === 4 && q === 'purple') return 3;
+  if(area === 4 && q === 'blue') return 4;
+  if(area === 4 && q === 'green') return 5;
   return -1;
 }
-

@@ -64,8 +64,17 @@ function renderResultGrid(best){
 
 function renderStats(best, nodes, elapsed, stopped, activeCells, skipped, solverMeta={}){
   document.getElementById('statScore').textContent = formatNum(best.totalScore);
-  document.getElementById('statBase').textContent = formatNum(best.baseScore);
-  document.getElementById('statBonus').textContent = formatNum(best.bonusScore);
+  // 分项统计表：按 bonusStats 项目循环生成（基础值/加成值/合计），全部项目求和即实际总属性。
+  const wrap = document.getElementById('statBreakdown');
+  if(wrap){
+    const keys = best.statKeys || (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id);
+    const totals = best.statTotals || {base:[], bonus:[], total:[]};
+    const rows = keys.map((k,i)=>{
+      const name = statName(k);
+      return `<tr><td>${escapeHtml(name)}</td><td>${formatNum(totals.base[i]||0)}</td><td>${formatNum(totals.bonus[i]||0)}</td><td>${formatNum(totals.total[i]||0)}</td></tr>`;
+    }).join('');
+    wrap.innerHTML = `<table class="stat-breakdown"><thead><tr><th>项目</th><th>基础值</th><th>加成值</th><th>合计</th></tr></thead><tbody>${rows || '<tr><td colspan="4">-</td></tr>'}</tbody></table>`;
+  }
   const manualPriorityTotal = (best.manualPriorityVector || []).reduce((a,b)=>a+b,0);
   const defaultPriorityTotal = (best.defaultPriorityVector || []).reduce((a,b)=>a+b,0);
   document.getElementById('statPriority').textContent = `${manualPriorityTotal + defaultPriorityTotal} 次`;
@@ -74,7 +83,7 @@ function renderStats(best, nodes, elapsed, stopped, activeCells, skipped, solver
   document.getElementById('statItems').textContent = best.itemCount;
   document.getElementById('statNodes').textContent = nodes.toLocaleString('zh-CN');
   const unused = activeCells - best.area;
-  const list = best.placements.map((p)=>`#${p.no} ${p.itemName}｜${qualityName(p.quality)}｜${p.area}格｜基础值 ${formatNum(p.value)}｜${p.customPriority !== null && p.customPriority !== undefined ? `手动邻接优先级 ${p.customPriority}` : '默认邻接规则'}｜${bonusDescription(p)}｜坐标 ${p.cells.map(([r,c])=>`(${r+1},${c+1})`).join(' ')}`).join('\n') || '未放入任何物品。';
+  const list = best.placements.map((p)=>`#${p.no} ${p.itemName}｜${qualityName(p.quality)}｜${p.area}格｜基础 ${baseStatsSummary(p)}｜${p.customPriority !== null && p.customPriority !== undefined ? `手动邻接优先级 ${p.customPriority}` : '默认邻接规则'}｜${bonusDescription(p)}｜坐标 ${p.cells.map(([r,c])=>`(${r+1},${c+1})`).join(' ')}`).join('\n') || '未放入任何物品。';
   const eventList = best.bonusEvents.length ? best.bonusEvents.map(eventLine).join('\n') : '无有效百分比加成。';
   const prioritySummary = buildPrioritySummary(best);
   const skippedText = skipped && skipped.length ? `\n\n未参与搜索（单件在当前空间/方向规则下没有任何合法位置）：\n${skipped.map(x=>`#${x.no} ${x.name}`).join('\n')}` : '';
@@ -126,14 +135,20 @@ function buildPrioritySummary(best){
   });
   if(!rows.length) return '当前没有手动指定优先级的物品，也没有符合默认邻接规则的重点物品。';
   return rows.map(x=>{
-    const label = x.mode === 'custom' ? `手动优先级 ${x.customPriority}` : SELF_PRIORITY_TIERS[x.tier].label;
+    const label = x.mode === 'custom' ? `手动优先级 ${x.customPriority}` : defaultPriorityTierLabel(x.tier);
     return `[${label}] #${x.no} ${x.name}：${x.count} 个不同邻居`;
   }).join('\n');
 }
 
 function eventLine(e){
-  if(e.kind === 'single_provider') return `单格 #${e.source} ${e.sourceName} → #${e.target} ${e.targetName}：${formatNum(e.base)} × ${formatNum(e.rate)}% = +${formatNum(e.bonus)}`;
-  if(e.kind === 'self_neighbor') return `#${e.target} ${e.targetName} 因相邻 #${e.neighbor} ${e.neighborName} 自身加成：${formatNum(e.base)} × ${formatNum(e.rate)}% = +${formatNum(e.bonus)}`;
+  const keys = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id);
+  const detail = (e.statBreakdown || [])
+    .map((v,k)=>({v, name:statName(keys[k] || `stat${k}`)}))
+    .filter(x=>x.v > 0)
+    .map(x=>`${x.name}+${formatNum(x.v)}`)
+    .join('、');
+  if(e.kind === 'single_provider') return `#${e.source} ${e.sourceName} → #${e.target} ${e.targetName}：${detail || `+${formatNum(e.bonus)}`}（合计 +${formatNum(e.bonus)}）`;
+  if(e.kind === 'self_neighbor') return `#${e.target} ${e.targetName} 因相邻 #${e.neighbor} ${e.neighborName} 自身加成：${detail || `+${formatNum(e.bonus)}`}（合计 +${formatNum(e.bonus)}）`;
   return `+${formatNum(e.bonus)}`;
 }
 

@@ -20,20 +20,22 @@ function prepareInventoryItems(){
   const {mask:activeMask} = buildActiveMask();
   const prepared = [];
   const skipped = [];
-  const normalizedInventory = inventory.map(x=>normalizeItemRecord(x, true));
-  for(const inv of normalizedInventory){
+  const statIds = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id);
+  for(const inv of inventory){
     const kind = bonusKind(inv);
     const base = {
       uid: inv.uid,
       no: inv.no,
-      typeId: inv.typeId,
-      typeName: inv.typeName || inv.name,
+      typeId: inv.id,
+      typeName: inv.name,
       name: inv.name,
       cells: normalizeCells(inv.cells),
       area: inv.cells.length,
       quality: inv.quality,
       value: Math.max(0, Number(inv.value)||0),
-      bonusRate: Math.max(0, Number(inv.bonusRate)||0),
+      // 分项基础值与加成率数组（按 bonusStats 顺序），供求器计算分项加成与 statTotals。
+      stats: statIds.map(k=>Math.max(0, Number((inv.baseStats || {})[k])||0)),
+      rates: statIds.map(k=>Math.max(0, Number((inv.bonusRates || {})[k])||0)),
       bonusKind: kind,
       priorityTier: -1,
       customPriority: inv.customPriority ?? null,
@@ -56,7 +58,7 @@ function prepareInventoryItems(){
           if(ok && !placeMap.has(m.toString())){
             placeMap.set(m.toString(), {
               mask:m, cells:abs, uid:base.uid, no:base.no, itemName:base.name, typeName:base.typeName,
-              area:base.area, quality:base.quality, value:base.value, bonusRate:base.bonusRate, bonusKind:base.bonusKind, priorityTier:base.priorityTier, customPriority:base.customPriority, manualOrder:-1, itemIndex:-1
+              area:base.area, quality:base.quality, value:base.value, stats:base.stats, rates:base.rates, bonusKind:base.bonusKind, priorityTier:base.priorityTier, customPriority:base.customPriority, manualOrder:-1, itemIndex:-1
             });
           }
         }
@@ -252,7 +254,7 @@ ${skipped.length>0?'存在单件无法合法放置的物品，将直接搜索最
     lastResult = {
       best, nodes:totalNodes, elapsed:Math.round(performance.now()-wallStarted), stopped:meta.stopped, width:W, height:H, active:active.map(r=>r.slice()),
       inventory:inventory.map(x=>({...x,cells:cloneCells(x.cells)})),
-      settings:{allowRotate:document.getElementById('allowRotate').checked,allowMirror:document.getElementById('allowMirror').checked,useAdjacencyBonus:useBonus,searchMode,parallelSearch:parallel,workerCount,optimizationOrder:['complete_loading','actual_total_score','manual_priority_neighbors','default_priority_neighbors','total_adjacency_count'],priorityTiers:SELF_PRIORITY_TIERS,manualPriorityRule:'1 is highest; blank uses default rules',assignmentStrategy:'geometry_then_item_assignment'},
+      settings:{allowRotate:document.getElementById('allowRotate').checked,allowMirror:document.getElementById('allowMirror').checked,useAdjacencyBonus:useBonus,searchMode,parallelSearch:parallel,workerCount,optimizationOrder:['complete_loading','actual_total_score','manual_priority_neighbors','default_priority_neighbors','total_adjacency_count'],statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>({id:s.id,name:s.name})),manualPriorityRule:'1 is highest; blank uses default rules',assignmentStrategy:'geometry_then_item_assignment'},
       skipped:skipped.map(x=>({no:x.no,name:x.name,area:x.area,value:x.value})),manualItems,
       solverMeta:{fullPackingAttempted:meta.fullPackingAttempted,fullPackingFound:meta.fullPackingFound,fullSearchCutoff:meta.fullSearchCutoff,optimizationCutoff:meta.optimizationCutoff,fallbackCutoff:meta.fallbackCutoff,totalArea:meta.totalArea,totalBase:meta.totalBase,totalItems:meta.totalItems,fullGroupCount:meta.fullGroupCount,detailedGroupCount:meta.detailedGroupCount,assignmentStrategy:meta.assignmentStrategy,singletonDeferredCount:meta.singletonDeferredCount,assignmentChecks:meta.assignmentChecks,workerCount}
     };
@@ -292,9 +294,11 @@ ${skipped.length>0?'存在单件无法合法放置的物品，将直接搜索最
   worker.postMessage({
     items:serialItems,
     activeMask:activeMask.toString(), activeCells, W, H, nodeLimit, timeLimit, useBonus,
+    statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id),
+    statCount:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).length,
     seedOffset:Math.imul(workerIndex+1,0x85ebca6b),
     manualCount:manualPriorityLevels.length,
-    defaultTierCount:SELF_PRIORITY_TIERS.length,
+    defaultTierCount:DEFAULT_TIER_COUNT,
     requiredTotalItems:inventory.length,
     requiredTotalArea:totalSearchArea,
     requiredTotalBase:totalSearchBase,

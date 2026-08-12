@@ -1,24 +1,15 @@
-// ui-library.js —— 物品库卡片：表格渲染/品质下拉/自定义添加/列显示控制。加载顺序 6/12，依赖 config、utils、talisman-model。
+// ui-library.js —— 法宝库卡片：表格渲染/属性筛选/表格列布局。加载顺序 7/13，依赖 config、utils、state、talisman-model。
 'use strict';
-
-function setOptionalColumnVisible(column,visible){
-  const className={value:'hide-value-columns','bonus-rate':'hide-bonus-rate-columns','add-count':'hide-add-count-column'}[column];
-  if(!className) return;
-  document.body.classList.toggle(className,!visible);
-  document.querySelectorAll(`[data-column-toggle="${column}"]`).forEach(x=>{ x.checked=visible; });
-  updateTableColumnLayout();
-}
 
 function updateTableColumnLayout(){
   ['itemsTable','inventoryTable'].forEach(id=>{
     const table=document.getElementById(id);
     if(!table) return;
     const visibleHeaders=[...table.querySelectorAll('thead th')].filter(th=>getComputedStyle(th).display!=='none');
-    const visibleCount=visibleHeaders.length;
-    table.style.setProperty('--visible-columns',String(Math.max(1,visibleCount)));
+    table.style.setProperty('--visible-columns',String(Math.max(1,visibleHeaders.length)));
     if(id==='inventoryTable'){
       const tracks=visibleHeaders.map(th=>{
-        if(th.classList.contains('col-bonus-control')) return '1.8fr';
+        if(th.classList.contains('col-base')) return '1.4fr';
         if(th.classList.contains('col-name')) return '1.25fr';
         if(th.classList.contains('col-no') || th.classList.contains('col-action')) return '.8fr';
         return '1fr';
@@ -29,93 +20,61 @@ function updateTableColumnLayout(){
   });
 }
 
-function renderQualitySelect(sel, selected, disabled=false, area=1){
-  const allowed = allowedQualitiesForArea(area);
-  const q = normalizeQualityForArea(selected, area);
-  sel.innerHTML = allowed.map(id=>`<option value="${id}" ${id===q?'selected':''}>${qualityLabel(id, area)}</option>`).join('');
-  sel.disabled = disabled;
+function libraryFilterAttribute(){
+  const sel = document.getElementById('libraryFilterAttribute');
+  return sel ? sel.value : '';
 }
-function qualitySelectHtml(idx, value, scope, disabled=false, area=1){
-  const allowed = allowedQualitiesForArea(area);
-  const q = normalizeQualityForArea(value, area);
-  const opts = allowed.map(id=>`<option value="${id}" ${id===q?'selected':''}>${qualityLabel(id, area)}</option>`).join('');
-  return `<select data-${scope}-k="quality" data-i="${idx}" ${disabled?'disabled':''}>${opts}</select>`;
+
+function initLibraryFilter(){
+  const sel = document.getElementById('libraryFilterAttribute');
+  if(!sel || sel.options.length > 1) return;
+  for(const a of ATTRIBUTE_OPTIONS){
+    const opt = document.createElement('option');
+    opt.value = a.id;
+    opt.textContent = a.name;
+    sel.appendChild(opt);
+  }
 }
 
 function renderItemsTable(){
   const tbody = document.querySelector('#itemsTable tbody');
   tbody.innerHTML = '';
-  itemDefs = itemDefs.map(x=>normalizeItemRecord(x, true));
-  itemDefs.forEach((it, idx)=>{
-    const area = it.cells.length;
+  const attrFilter = libraryFilterAttribute();
+  const rows = itemDefs
+    .map((it, idx)=>({it, idx}))
+    .filter(({it})=>!attrFilter || it.attribute === attrFilter);
+  if(!rows.length){
     const tr = document.createElement('tr');
-    const locked = area === 5 || (area === 3 && it.threeSelfBonus);
-    tr.innerHTML = `
-      <td class="col-enabled" data-label="启用"><input type="checkbox" data-lib-k="enabled" data-i="${idx}" ${it.enabled!==false?'checked':''}></td>
-      <td class="col-name" data-label="物品"><span class="shape-name">${escapeHtml(it.name)}</span><div class="hint">${area} 格</div></td>
-      <td class="col-shape" data-label="形状"></td>
-      <td class="col-quality" data-label="品质">${qualitySelectHtml(idx, it.quality, 'lib', locked, area)}</td>
-      <td class="col-value" data-label="默认属性"><input type="number" data-lib-k="value" data-i="${idx}" min="0" step="1" value="${formatPlain(it.value)}"></td>
-      <td class="col-bonus-rate" data-label="加成率"><input type="number" data-lib-k="bonusRate" data-i="${idx}" min="0" step="1" value="${formatPlain(it.bonusRate)}" ${bonusKind(it)==='none' && it.quality !== 'red'?'disabled':''}></td>
-      <td class="col-add-count" data-label="添加数量"><input type="number" data-add-count="${idx}" min="1" step="1" value="1"></td>
-      <td class="col-action" data-label="操作"><button class="compact" data-add="${idx}" ${it.enabled===false?'disabled':''}>添加</button></td>`;
-    tr.children[2].appendChild(makeMiniPreview(it.cells));
+    tr.innerHTML = '<td class="col-empty" colspan="8"><div class="empty">当前筛选条件下没有法宝。</div></td>';
     tbody.appendChild(tr);
-  });
-  tbody.querySelectorAll('input[data-lib-k], select[data-lib-k]').forEach(inp=>{
-    inp.addEventListener('change', e=>{
-      const i = Number(e.target.dataset.i), k = e.target.dataset.libK;
-      if(!itemDefs[i]) return;
-      if(k==='enabled') itemDefs[i].enabled = e.target.checked;
-      if(k==='quality'){
-        itemDefs[i].quality = e.target.value;
-        itemDefs[i].value = qualityValue(e.target.value, itemDefs[i].cells.length);
-        itemDefs[i].bonusRate = defaultBonusRate(itemDefs[i].cells.length, e.target.value, itemDefs[i].threeSelfBonus);
-      }
-      if(k==='value') itemDefs[i].value = Math.max(0, Number(e.target.value)||0);
-      if(k==='bonusRate') itemDefs[i].bonusRate = Math.max(0, Number(e.target.value)||0);
-      itemDefs[i] = normalizeItemRecord(itemDefs[i], true);
-      renderItemsTable();
-    });
+    updateTableColumnLayout();
+    return;
+  }
+  rows.forEach(({it, idx})=>{
+    const area = it.cells.length;
+    const attr = ATTRIBUTE_MAP[it.attribute] || {name:it.attribute, displayColor:'#6b7280'};
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="col-name" data-label="名称"><span class="shape-name">${escapeHtml(it.name)}</span><div class="hint">${area} 格</div></td>
+      <td class="col-attribute" data-label="属性"><span class="attr-tag" style="border-color:${attr.displayColor};color:${attr.displayColor}">${escapeHtml(attr.name)}</span></td>
+      <td class="col-quality" data-label="品质">${escapeHtml(qualityName(it.quality))}</td>
+      <td class="col-shape" data-label="形状预览"></td>
+      <td class="col-base" data-label="基础属性">${escapeHtml(baseStatsSummary(it))}</td>
+      <td class="col-bonus" data-label="加成">${bonusControlHtml(it)}</td>
+      <td class="col-add-count" data-label="添加数量"><input type="number" data-add-count="${idx}" min="1" step="1" value="1"></td>
+      <td class="col-action" data-label="操作"><button class="compact" data-add="${idx}">添加</button></td>`;
+    tr.querySelector('.col-shape').appendChild(makeMiniPreview(it.cells));
+    tbody.appendChild(tr);
   });
   tbody.querySelectorAll('button[data-add]').forEach(btn=>{
     btn.addEventListener('click', e=>{
       const i = Number(e.currentTarget.dataset.add);
       const countInput = tbody.querySelector(`input[data-add-count="${i}"]`);
-      const rawCount = Math.max(1, Math.floor(Number(countInput.value)||1));
+      const rawCount = Math.max(1, Math.floor(Number(countInput && countInput.value)||1));
       const count = Math.min(rawCount, 200);
       if(rawCount > 200) alert('单次添加数量已限制为 200');
       addToInventory(i, count);
     });
   });
+  updateTableColumnLayout();
 }
-
-function addCustomItem(){
-  const name = document.getElementById('customName').value.trim() || `自定义-${itemDefs.length+1}`;
-  const pattern = document.getElementById('customPattern').value;
-  const cells = parsePattern(pattern);
-  if(!cells.length){ alert('请用 # 输入至少一个占用格。'); return; }
-  const quality = document.getElementById('customQuality').value || 'green';
-  const valueRaw = Number(document.getElementById('customValue').value);
-  const rateRaw = Number(document.getElementById('customBonusRate').value);
-  itemDefs.push(normalizeItemRecord({
-    id:'custom-'+Date.now(), name, cells, quality,
-    value:valueRaw>0?valueRaw:qualityValue(quality, cells.length), bonusRate:rateRaw>=0?rateRaw:defaultBonusRate(cells.length, quality, false),
-    threeSelfBonus:false, enabled:true
-  }, true));
-  document.getElementById('customName').value = '';
-  document.getElementById('customPattern').value = '';
-  document.getElementById('customValue').value = '2';
-  document.getElementById('customBonusRate').value = '0';
-  renderItemsTable();
-}
-
-function parsePattern(pattern){
-  const lines = pattern.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-  const cells = [];
-  lines.forEach((line,r)=>{
-    [...line].forEach((ch,c)=>{ if(ch==='#' || ch==='1' || ch==='■' || ch==='黑') cells.push([r,c]); });
-  });
-  return normalizeCells(cells);
-}
-
