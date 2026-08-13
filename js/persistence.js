@@ -5,14 +5,16 @@ function saveConfig(){
   const data = {
     schemaVersion:2,
     W,H,active,
-    allowRotate:document.getElementById('allowRotate').checked,
-    allowMirror:document.getElementById('allowMirror').checked,
     useAdjacencyBonus:document.getElementById('useAdjacencyBonus').checked,
     searchMode:document.getElementById('searchMode').value,
+    // 求解引擎为可选字段；旧存档缺失时读取侧缺省 legacy，schemaVersion 不变
+    engineMode:document.getElementById('engineMode').value,
     nodeLimit:Number(document.getElementById('nodeLimit').value)||2500000,
     timeLimit:Number(document.getElementById('timeLimit').value)||20000,
     parallelSearch:document.getElementById('parallelSearch').checked,
     workerCount:Number(document.getElementById('workerCount').value)||2,
+    // 存档绑定数据库版本：读取时比对，防止 id 复用导致同 id 指向不同法宝而不自知。
+    dbVersion:(window.TALISMAN_DB && window.TALISMAN_DB.meta && window.TALISMAN_DB.meta.version) ?? null,
     // 数值全部来自内置数据库，清单只存引用（id + 手动邻接优先级）。
     inventory:inventory.map(x=>({id:x.id, customPriority:x.customPriority ?? null}))
   };
@@ -35,9 +37,7 @@ function applySharedSettings(data){
     active = active.map(row=>row.map(v=>v !== false && !!v));
   }
   document.getElementById('gridW').value = W; document.getElementById('gridH').value = H;
-  // 兼容历史字段名：历代存档均用 allowRotate/allowMirror，额外容忍 allowRotation 命名变体。
-  document.getElementById('allowRotate').checked = (data.allowRotate ?? data.allowRotation) === true;
-  document.getElementById('allowMirror').checked = !!(data.allowMirror ?? data.allowMirroring);
+  // 旋转/镜像选项已从界面移除并固定为始终允许；旧存档中的对应字段直接忽略。
   document.getElementById('useAdjacencyBonus').checked = data.useAdjacencyBonus === true;
   if(data.searchMode === 'fast' || data.searchMode === 'deep'){
     document.getElementById('searchMode').value = data.searchMode;
@@ -48,6 +48,8 @@ function applySharedSettings(data){
   }
   if(Number(data.nodeLimit) >= 1000) document.getElementById('nodeLimit').value = String(Math.floor(Number(data.nodeLimit)));
   if(Number(data.timeLimit) >= 100) document.getElementById('timeLimit').value = String(Math.floor(Number(data.timeLimit)));
+  // 求解引擎：非法或缺省值（旧存档）一律回退 legacy
+  document.getElementById('engineMode').value = (data.engineMode === 'hybrid' || data.engineMode === 'auto') ? data.engineMode : 'legacy';
   document.getElementById('parallelSearch').checked = !!data.parallelSearch;
   document.getElementById('workerCountLabel').hidden = !data.parallelSearch;
   if(Number(data.workerCount) >= 2) document.getElementById('workerCount').value = String(Math.floor(Number(data.workerCount)));
@@ -73,6 +75,13 @@ function loadConfig(){
     return;
   }
   applySharedSettings(data);
+  // 比对存档时的数据库版本与当前版本；不一致只提示不清空（id 可能复用指向不同法宝，需用户核对）。
+  const currentDbVersion = (window.TALISMAN_DB && window.TALISMAN_DB.meta && window.TALISMAN_DB.meta.version) ?? null;
+  const savedDbVersion = data.dbVersion ?? null;
+  if(savedDbVersion !== currentDbVersion){
+    const fmtVer = v => v == null ? '未知' : v;
+    alert(`法宝数据库已更新（存档版本 ${fmtVer(savedDbVersion)} → 当前 ${fmtVer(currentDbVersion)}），旧清单中的法宝可能与保存时不是同一件，请核对清单内容。`);
+  }
   // 按 id 查库重建清单；查不到的 id 跳过并提示。
   inventory = [];
   nextItemNo = 1;

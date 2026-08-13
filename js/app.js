@@ -54,18 +54,14 @@ function bindEvents(){
     document.getElementById('nodeLimit').disabled=!deep;
     document.getElementById('timeLimit').disabled=!deep;
   });
+  document.getElementById('engineMode').addEventListener('change', ()=>{
+    lastResult = null;
+    renderResultGrid(null);
+  });
   document.getElementById('exportBtn').addEventListener('click', exportResult);
   document.getElementById('saveBtn').addEventListener('click', saveConfig);
   document.getElementById('loadBtn').addEventListener('click', loadConfig);
   document.getElementById('useAdjacencyBonus').addEventListener('change', ()=>{
-    lastResult = null;
-    renderResultGrid(null);
-  });
-  document.getElementById('allowRotate').addEventListener('change', ()=>{
-    lastResult = null;
-    renderResultGrid(null);
-  });
-  document.getElementById('allowMirror').addEventListener('change', ()=>{
     lastResult = null;
     renderResultGrid(null);
   });

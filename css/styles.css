@@ -17,7 +17,6 @@
   label{display:inline-flex;align-items:center;gap:6px;margin:4px 10px 4px 0;color:#374151}
   input[type="number"], input[type="text"], textarea, select{border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:white;color:var(--text)}
   input[type="number"]{width:82px}
-  input.name-input{width:128px}
   input.priority-input{width:72px}
   textarea{width:100%;min-height:82px;font-family:ui-monospace,Consolas,monospace;resize:vertical}
   button{border:1px solid #cbd5e1;background:white;color:#111827;border-radius:9px;padding:7px 10px;cursor:pointer;margin:3px 4px 3px 0}
@@ -41,7 +40,9 @@
   table{width:100%;border-collapse:collapse;margin-top:8px;min-width:0;table-layout:auto}
   th,td{border-bottom:1px solid #e5e7eb;padding:6px;text-align:left;vertical-align:middle}
   th{font-size:12px;color:#4b5563;background:#f9fafb;white-space:nowrap}
-  .shape-name{font-weight:600}
+  .shape-name{font-weight:600;white-space:nowrap}
+    .name-line{display:flex;flex-wrap:nowrap;align-items:center;justify-content:space-between;gap:16px}
+    .name-line .hint{margin-top:0;margin-left:auto;white-space:nowrap}
   .output-wrap{display:grid;grid-template-columns:1fr 390px;gap:16px;align-items:start}
   .stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
   .stat{background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:8px}
@@ -62,7 +63,7 @@
   .table-scroll thead{position:sticky;top:0;z-index:5;background:#f9fafb;box-shadow:0 1px 0 #cbd5e1}
   .table-scroll thead th{position:relative;z-index:1;background:#f9fafb}
   .attr-tag{display:inline-block;padding:1px 8px;border:1.5px solid;border-radius:999px;font-size:12px;font-weight:700;background:#fff;white-space:nowrap}
-  .col-no{width:44px}.col-shape{width:58px}.col-attribute{width:60px}.col-quality{width:52px}.col-base{width:120px}.col-bonus{width:150px}.col-add-count{width:96px}.col-priority{width:76px}.col-action{width:60px}
+  .col-no{width:44px}.col-shape{width:58px}.col-attribute{width:60px}.col-quality{width:76px}.col-base{width:120px}.col-bonus{width:150px}.col-priority{width:76px}.col-action{width:60px}
   .table-scroll td.col-empty{grid-column:1/-1;width:100%;justify-content:center;text-align:center}
   .inventory-cell-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;padding:10px 12px;border:1px solid #dbe3ef;border-radius:8px;background:#f8fafc;color:#475569}
   .inventory-cell-summary span{font-size:12px}
@@ -73,8 +74,12 @@
   .inventory-cell-summary .cell-balance.over{color:#b91c1c}
   @media (min-width:601px){
     .table-scroll table,.table-scroll thead,.table-scroll tbody{display:block;width:100%}
-    .table-scroll tr{display:grid;grid-template-columns:repeat(var(--visible-columns,5),minmax(0,1fr));width:100%}
+    .table-scroll tr{display:grid;grid-template-columns:var(--column-tracks, repeat(var(--visible-columns,5),minmax(0,1fr)));width:100%}
     .table-scroll th,.table-scroll td{display:flex;width:auto;min-width:0;align-items:center;justify-content:center;text-align:center}
+    /* 基础属性/加成单元格内多个 <div> 逐行展示：覆盖上方行方向 flex，改为纵向堆叠 */
+    .table-scroll td.col-base{flex-direction:column;align-items:flex-start;justify-content:flex-start;text-align:left;gap:2px;font-size:12px}
+    .table-scroll td.col-bonus{flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:2px}
+    .table-scroll td.col-base .hint,.table-scroll td.col-bonus .hint{margin-top:0}
     .table-scroll th.col-name,.table-scroll td.col-name{justify-content:flex-start;text-align:left}
     .table-scroll td.col-name input{width:100%}
     .table-scroll td.col-empty .empty{width:100%;white-space:nowrap}
@@ -142,7 +147,6 @@
     .table-scroll td.col-empty::before{display:none}
     .table-scroll input[type="number"],.table-scroll input[type="text"],.table-scroll select{min-width:0;width:100%}
     .table-scroll button{flex:0 0 auto;white-space:nowrap}
-    .table-scroll .name-input{width:100%}
     .table-scroll .mini{margin-left:auto}
     .inventory-cell-summary{align-items:flex-start;flex-wrap:wrap}
     .inventory-cell-summary .cell-balance{width:100%;text-align:left}

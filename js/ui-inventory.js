@@ -21,8 +21,8 @@ function renderInventoryTable(){
       <td class="col-attribute" data-label="属性"><span class="attr-tag" style="border-color:${attr.displayColor};color:${attr.displayColor}">${escapeHtml(attr.name)}</span></td>
       <td class="col-quality" data-label="品质">${escapeHtml(qualityName(it.quality))}</td>
       <td class="col-shape" data-label="形状"></td>
-      <td class="col-base" data-label="基础属性">${escapeHtml(baseStatsSummary(it))}</td>
-      <td class="col-bonus" data-label="加成模式">${bonusControlHtml(it)}</td>
+      <td class="col-base" data-label="基础属性">${baseStatsLinesHtml(it)}</td>
+      <td class="col-bonus" data-label="加成模式">${bonusLinesHtml(it)}</td>
       <td class="col-priority" data-label="邻接优先级"><input class="priority-input" type="number" data-inv-k="customPriority" data-i="${idx}" min="1" max="99" step="1" value="${it.customPriority ?? ''}" placeholder="默认" title="1 为最高，数字越小越优先；留空使用默认规则"></td>
       <td class="col-action" data-label="操作"><button class="danger compact" data-del-inv="${idx}">删除</button></td>`;
     tr.querySelector('.col-shape').appendChild(makeMiniPreview(it.cells));
@@ -65,18 +65,16 @@ function renderInventoryCellSummary(){
   balanceEl.textContent=difference===0?'格数刚好':difference>0?`超出 ${difference} 格`:`还差 ${Math.abs(difference)} 格`;
 }
 
-function addToInventory(defIndex, count){
+function addToInventory(defIndex){
   const def = itemDefs[defIndex];
   if(!def) return;
-  for(let k=0;k<count;k++){
-    const rec = normalizeItemRecord({
-      uid:'inv-' + Date.now() + '-' + Math.random().toString(16).slice(2),
-      no: nextItemNo++,
-      id: def.id,
-      customPriority: null
-    });
-    if(rec) inventory.push(rec);
-  }
+  const rec = normalizeItemRecord({
+    uid:'inv-' + Date.now() + '-' + Math.random().toString(16).slice(2),
+    no: nextItemNo++,
+    id: def.id,
+    customPriority: null
+  });
+  if(rec) inventory.push(rec);
   renderInventoryTable();
   renderResultGrid(null);
   lastResult = null;

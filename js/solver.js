@@ -15,8 +15,9 @@ function configureWorkerCountControl(){
   document.getElementById('workerCountHint').textContent = `最多 ${limit} 个（按设备能力）`;
 }
 function prepareInventoryItems(){
-  const allowRot = document.getElementById('allowRotate').checked;
-  const allowMir = document.getElementById('allowMirror').checked;
+  // 旋转/镜像选项已从界面移除；用户要求禁止旋转与镜像，法宝仅以原方向摆放。
+  const allowRot = false;
+  const allowMir = false;
   const {mask:activeMask} = buildActiveMask();
   const prepared = [];
   const skipped = [];
@@ -210,6 +211,8 @@ function solveAndRender(){
   if(inventory.length===0){ alert('请先从法宝库添加已有法宝。'); return; }
   if(items.length===0){ alert('已有物品都无法放入当前空间。请调整空间、旋转/镜像设置或物品清单。'); return; }
   const searchMode=document.getElementById('searchMode').value;
+  // 求解引擎：DOM 取值缺省 legacy；fast 档恒走 legacy（见 engOrchCreateWorkers，零行为变化铁律）
+  const engineMode=(document.getElementById('engineMode') && document.getElementById('engineMode').value) || 'legacy';
   const requestedNodeLimit = Math.max(1000, Number(document.getElementById('nodeLimit').value)||2500000);
   const requestedTimeLimit = Math.max(100, Number(document.getElementById('timeLimit').value)||20000);
   const nodeLimit=searchMode==='fast'?Math.min(requestedNodeLimit,350000):requestedNodeLimit;
@@ -223,12 +226,25 @@ function solveAndRender(){
     ...t,
     placements:t.placements.map(p=>({...p, mask:p.mask.toString()}))
   }));
-  solverWorkers=Array.from({length:workerCount},()=>createSolverWorker());
+  const totalSearchArea = inventory.reduce((sum,x)=>sum+(x.cells?.length||0),0);
+  const totalSearchBase = inventory.reduce((sum,x)=>sum+Math.max(0,Number(x.value)||0),0);
+  // Worker 启动负载：legacy 档原样走现有 postMessage；SA 档由 orchestrator 构建模型与 init
+  const workerPayload={
+    items:serialItems,
+    activeMask:activeMask.toString(), activeCells, W, H, nodeLimit, timeLimit, useBonus,
+    statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id),
+    statCount:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).length,
+    manualCount:manualPriorityLevels.length,
+    defaultTierCount:DEFAULT_TIER_COUNT,
+    requiredTotalItems:inventory.length,
+    requiredTotalArea:totalSearchArea,
+    requiredTotalBase:totalSearchBase,
+    skippedCount:skipped.length
+  };
+  solverWorkers=engOrchCreateWorkers({engineMode, searchMode, workerCount, payload:workerPayload});
   solverWorker=solverWorkers[0];
   setSolverRunning(true);
   startSolverStatusHeartbeat(activeCells, inventory.length);
-  const totalSearchArea = inventory.reduce((sum,x)=>sum+(x.cells?.length||0),0);
-  const totalSearchBase = inventory.reduce((sum,x)=>sum+Math.max(0,Number(x.value)||0),0);
   document.getElementById('statusBox').textContent = `正在后台搜索（${searchMode==='fast'?'快速':'深度'}档，${workerCount} 个 Worker）…
 物品总占格：${totalSearchArea}，可用空间：${activeCells}
 ${skipped.length>0?'存在单件无法合法放置的物品，将直接搜索最佳可行子集。':(totalSearchArea<=activeCells?'先寻找全部物品的完整摆法，再按实际总属性与邻接顺序优化。':'物品总面积超过空间，将按实际总属性与邻接顺序搜索最佳可行子集。')}
@@ -254,17 +270,22 @@ ${skipped.length>0?'存在单件无法合法放置的物品，将直接搜索最
     lastResult = {
       best, nodes:totalNodes, elapsed:Math.round(performance.now()-wallStarted), stopped:meta.stopped, width:W, height:H, active:active.map(r=>r.slice()),
       inventory:inventory.map(x=>({...x,cells:cloneCells(x.cells)})),
-      settings:{allowRotate:document.getElementById('allowRotate').checked,allowMirror:document.getElementById('allowMirror').checked,useAdjacencyBonus:useBonus,searchMode,parallelSearch:parallel,workerCount,optimizationOrder:['complete_loading','actual_total_score','manual_priority_neighbors','default_priority_neighbors','total_adjacency_count'],statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>({id:s.id,name:s.name})),manualPriorityRule:'1 is highest; blank uses default rules',assignmentStrategy:'geometry_then_item_assignment'},
+      settings:{useAdjacencyBonus:useBonus,searchMode,parallelSearch:parallel,workerCount,optimizationOrder:['complete_loading','actual_total_score','manual_priority_neighbors','default_priority_neighbors','total_adjacency_count'],statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>({id:s.id,name:s.name})),manualPriorityRule:'1 is highest; blank uses default rules',assignmentStrategy:'geometry_then_item_assignment'},
       skipped:skipped.map(x=>({no:x.no,name:x.name,area:x.area,value:x.value})),manualItems,
-      solverMeta:{fullPackingAttempted:meta.fullPackingAttempted,fullPackingFound:meta.fullPackingFound,fullSearchCutoff:meta.fullSearchCutoff,optimizationCutoff:meta.optimizationCutoff,fallbackCutoff:meta.fallbackCutoff,totalArea:meta.totalArea,totalBase:meta.totalBase,totalItems:meta.totalItems,fullGroupCount:meta.fullGroupCount,detailedGroupCount:meta.detailedGroupCount,assignmentStrategy:meta.assignmentStrategy,singletonDeferredCount:meta.singletonDeferredCount,assignmentChecks:meta.assignmentChecks,workerCount}
+      solverMeta:{fullPackingAttempted:meta.fullPackingAttempted,fullPackingFound:meta.fullPackingFound,fullSearchCutoff:meta.fullSearchCutoff,optimizationCutoff:meta.optimizationCutoff,fallbackCutoff:meta.fallbackCutoff,totalArea:meta.totalArea,totalBase:meta.totalBase,totalItems:meta.totalItems,fullGroupCount:meta.fullGroupCount,detailedGroupCount:meta.detailedGroupCount,assignmentStrategy:meta.assignmentStrategy,singletonDeferredCount:meta.singletonDeferredCount,assignmentChecks:meta.assignmentChecks,workerCount,engine:meta.engine||'dfs'}
     };
     solverWorkers=[]; solverWorker=null; stopSolverStatusHeartbeat(); setSolverRunning(false);
     renderResultGrid(best);
     renderStats(best,totalNodes,lastResult.elapsed,meta.stopped,activeCells,skipped,lastResult.solverMeta);
   };
   solverWorkers.forEach((worker,workerIndex)=>{ worker.onmessage = function(ev){
-    const msg = ev.data;
+    let msg = ev.data;
+    // 新引擎消息接入：进入现有分支前完成契约转换（现有分支逻辑零改动）
+    if(msg.type === 'swap-req'){ engOrchHandleSwapReq(worker, msg); return; }
+    if(msg.type === 'incumbent-lite'){ const rebuilt = engOrchConvertIncumbentLite(worker, msg); if(!rebuilt) return; msg = rebuilt; }
+    if(msg.type === 'incumbent') engOrchOnDfsIncumbent(worker, msg);
     if(msg.type === 'progress'){
+      engOrchNoteProgress(worker, msg);
       updateSolverStatusFromMessage({...msg,nodes:totalNodes+(Number(msg.nodes)||0),stage:`Worker ${workerIndex+1}/${workerCount}：${msg.stage||'搜索中'}`},activeCells);
       return;
     }
@@ -283,6 +304,7 @@ ${skipped.length>0?'存在单件无法合法放置的物品，将直接搜索最
       },activeCells);
       return;
     }
+    if(msg.type === 'done') msg = engOrchConvertDone(worker, msg) || msg;
     if(msg.type !== 'done') return;
     finishWorker(worker,msg);
   };
@@ -291,19 +313,8 @@ ${skipped.length>0?'存在单件无法合法放置的物品，将直接搜索最
     cleanupSolverWorker();
     document.getElementById('statusBox').textContent = `计算失败：${message}`;
   };
-  worker.postMessage({
-    items:serialItems,
-    activeMask:activeMask.toString(), activeCells, W, H, nodeLimit, timeLimit, useBonus,
-    statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id),
-    statCount:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).length,
-    seedOffset:Math.imul(workerIndex+1,0x85ebca6b),
-    manualCount:manualPriorityLevels.length,
-    defaultTierCount:DEFAULT_TIER_COUNT,
-    requiredTotalItems:inventory.length,
-    requiredTotalArea:totalSearchArea,
-    requiredTotalBase:totalSearchBase,
-    skippedCount:skipped.length
-  });
+  if(worker._engineKind === 'sa') return; // SA Worker 已在创建时由 orchestrator 发送 init 负载
+  worker.postMessage({...workerPayload, seedOffset:Math.imul(workerIndex+1,0x85ebca6b)});
   });
 }
 
