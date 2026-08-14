@@ -244,7 +244,7 @@ function ewApplyMove(it, pNew){
 function ewPartsOfBest(){
   return {complete: bestComplete, area: bestArea, base: bestBase, bonus: bestBonus,
     total: bestBase + bestBonus, adj: bestAdj, items: bestItems,
-    manW: bestManW, defW: bestDefW, T0};
+    manW: bestManW, defW: bestDefW, bestBase, bestBonus, T0};
 }
 function ewCopyToBest(){
   bestSol.set(solPl);
@@ -537,18 +537,328 @@ function ewOpEscapeRebuild(big){
   }
   return true;
 }
+// ============================================================================
+// 期 2：LNS（大邻域搜索）—— 摧毁×受限 DFS 修复 + 配对感知上界剪枝
+// ----------------------------------------------------------------------------
+// 摧毁三式（destroyRandom / destroyWorst / destroyRegion）拆 k 件（k=2~10 自适应），
+// 候选池 = 拆出件 + 未放件，受限 DFS anytime 修复：500ms 软预算分片（与主循环
+// 25ms 片机制兼容：同步片内跑完后主循环下一片自然让出，不阻塞消息消化），
+// 任一时点可返回当前最好部分解；找不到完整修复时接受部分修复。
+// 零 BigInt：BFS/位板（Uint32Array occ + Int16Array cellOwner）实现连通域与碎洞剔除。
+// RNG：摧毁选择与失败缓存命中均走主 RNG 流且次序确定（种子复现性不变）；
+// DFS 搜索本体零 RNG（anytime 截断点只依赖时钟，解状态确定）。
+// ============================================================================
+var ewLnsKSmall = 3, ewLnsKBig = 6;
+var ewLnsFailVal = null, ewLnsFailIter = null, ewLnsFailN = 0;
+var ewLnsPoolMark = null, ewLnsMaxPair = null, ewLnsMinArea = 0;
+var ewLnsStackIt = null, ewLnsStackPtr = null, ewLnsStackCnt = null;
+var ewLnsCandP = null, ewLnsCandE = null, ewLnsCandOff = null;
+var ewLnsUbAt = null, ewLnsUbVal = null, ewLnsUbEpoch = 0;
+var ewLnsPool = null, ewLnsPoolN = 0, ewLnsOriginPl = null, ewLnsBestSol = null, ewLnsBestItems = 0, ewLnsOrder = null;
+function ewInitLns(){
+  const m = ewModel, I = m.I;
+  ewLnsKSmall = 3; ewLnsKBig = 6;
+  ewLnsFailVal = new Int16Array(8); ewLnsFailIter = new Int32Array(8); ewLnsFailN = 0;
+  ewLnsPoolMark = new Int16Array(I);
+  ewLnsPool = new Int16Array(I);
+  ewLnsOriginPl = new Int32Array(I);
+  ewLnsBestSol = new Int32Array(I).fill(-1);
+  ewLnsBestItems = 0;
+  ewLnsOrder = new Int16Array(I + 1); // 根节点排定的件序（深度 d 放 ewLnsOrder[d]）
+  ewLnsMaxPair = new Float64Array(I);
+  for(let i = 0; i < I; i++){
+    let mx = 0;
+    for(let j = 0; j < I; j++){ if(j !== i && ewPairBonus[i * I + j] > mx) mx = ewPairBonus[i * I + j]; }
+    ewLnsMaxPair[i] = mx; // 来自 CSR adjBonus 同源表（pairBonusTable 逐字同值）
+  }
+  ewLnsStackIt = new Int16Array(I + 1);
+  ewLnsStackPtr = new Int16Array(I + 1);
+  ewLnsStackCnt = new Int16Array(I + 1);
+  const CAP = 12, LCAP = CAP * (I + 1);
+  ewLnsCandP = new Int32Array(LCAP);
+  ewLnsCandE = new Float64Array(LCAP);
+  ewLnsCandOff = new Int32Array(I + 2);
+  ewLnsUbAt = new Int32Array(I + 1); // 深度级 UB 缓存戳（免逐层重扫碎洞）
+  ewLnsUbVal = new Float64Array(I + 1);
+}
+// 摧毁一：随机不重复拆 k 件（拒绝采样）
+function ewLnsDestroyRandom(k){
+  regionStamp.fill(0);
+  let n = 0;
+  while(n < k && n < curItems){
+    const it = placedOrder[ewRandInt(curItems)];
+    if(regionStamp[it]) continue;
+    regionStamp[it] = 1;
+    touchedList[n++] = it;
+  }
+  return n;
+}
+// 摧毁二：边际贡献最差 k 件。边际 = 撤除该件的 total 损失（复用 ewDeltaFor，
+// O(周长)）；损失最小者先拆。选择排序（curItems ≤ I ≤ ~20，O(n²) 可忽）
+function ewLnsDestroyWorst(k){
+  const useB = ewMeta.useBonus;
+  const n = curItems;
+  for(let s = 0; s < n; s++) touchedList[s] = placedOrder[s];
+  for(let a = 0; a < n; a++){
+    let bestK = a, bestGain = Infinity;
+    for(let b = a; b < n; b++){
+      const it = touchedList[b];
+      const d = ewDeltaFor(solPl[it], -1);
+      const gain = -(d.base + (useB ? d.bonus : 0) + 1e-3 * d.adj);
+      if(gain < bestGain){ bestGain = gain; bestK = b; }
+    }
+    const tmp = touchedList[a]; touchedList[a] = touchedList[bestK]; touchedList[bestK] = tmp;
+  }
+  return Math.min(k, n);
+}
+// 摧毁三：cellOwner BFS 连通域拆件（零 BigInt）：从随机已放件的一格出发在占用格上
+// BFS，累计件数达 k 即停（保证拆除集空间连通且件数不超 k）
+function ewLnsDestroyRegion(k){
+  const m = ewModel, W = m.W, H = m.H;
+  if(curItems === 0) return 0;
+  const seedIt = placedOrder[ewRandInt(curItems)];
+  const seedP = solPl[seedIt];
+  if(seedP < 0) return 0;
+  regionStamp.fill(0);
+  bfsVisited.fill(0);
+  let head = 0, tail = 0, n = 0;
+  const startCell = m.cellsFlat[m.plCellsOff[seedP] + ewRandInt(m.plCellsLen[seedP])];
+  bfsQueue[tail++] = startCell;
+  bfsVisited[startCell] = 1;
+  while(head < tail && n < k){
+    const cell = bfsQueue[head++];
+    const it = cellOwner[cell];
+    if(it >= 0 && regionStamp[it] === 0){ regionStamp[it] = 1; touchedList[n++] = it; }
+    if(n >= k) break;
+    const r = (cell / W) | 0, c = cell % W;
+    if(r > 0 && !bfsVisited[cell - W]){ bfsVisited[cell - W] = 1; bfsQueue[tail++] = cell - W; }
+    if(r + 1 < H && !bfsVisited[cell + W]){ bfsVisited[cell + W] = 1; bfsQueue[tail++] = cell + W; }
+    if(c > 0 && !bfsVisited[cell - 1]){ bfsVisited[cell - 1] = 1; bfsQueue[tail++] = cell - 1; }
+    if(c + 1 < W && !bfsVisited[cell + 1]){ bfsVisited[cell + 1] = 1; bfsQueue[tail++] = cell + 1; }
+  }
+  return n;
+}
+// 配对感知上界（保守：宁松不紧）：
+//   UB = 当前分（base+useBonus?bonus）
+//      + 分数背包：剩余池件按密度 (value+maxPair)/area 降序装入可用面积（可分割上界）
+//      + 配对松弛：剩余各件取 ewLnsMaxPair（potMat 最大可达项）之和
+//      （真实加成 = Σ对 ≤ Σ件最大邻居加成）
+//   可用面积 = cellCount - curArea - 碎洞（BFS 空格连通域 < 池最小件面积者剔除）
+// 浮点累积防御：剪枝侧比较时另加 1e-6 容差（见 ewLnsSearch），本函数不再放宽。
+function ewLnsUB(cap){
+  const m = ewModel, W = m.W, H = m.H, n = ewLnsPoolN;
+  const useB = ewMeta.useBonus;
+  // 碎洞剔除：占用格标记（cellOwner，零 BigInt）→ 空格 BFS 连通域，
+  // 域格数 < 池最小件面积则整域不可用（放不下剩余最小件的碎洞剔除）
+  const total = W * H;
+  for(let c = 0; c < total; c++) bfsVisited[c] = cellOwner[c] >= 0 ? 1 : 0;
+  let avail = 0;
+  for(let c = 0; c < total; c++){
+    if(bfsVisited[c]) continue;
+    let head = 0, tail = 0, size = 0;
+    bfsQueue[tail++] = c;
+    bfsVisited[c] = 1;
+    while(head < tail){
+      const cell = bfsQueue[head++];
+      size++;
+      const r = (cell / W) | 0, cc = cell % W;
+      if(r > 0 && !bfsVisited[cell - W]){ bfsVisited[cell - W] = 1; bfsQueue[tail++] = cell - W; }
+      if(r + 1 < H && !bfsVisited[cell + W]){ bfsVisited[cell + W] = 1; bfsQueue[tail++] = cell + W; }
+      if(cc > 0 && !bfsVisited[cell - 1]){ bfsVisited[cell - 1] = 1; bfsQueue[tail++] = cell - 1; }
+      if(cc + 1 < W && !bfsVisited[cell + 1]){ bfsVisited[cell + 1] = 1; bfsQueue[tail++] = cell + 1; }
+    }
+    if(size >= ewLnsMinArea) avail += size;
+  }
+  let ub = curBase + (useB ? curBonus : 0);
+  if(n === 0 || avail <= 0) return ub;
+  // 分数背包（密度降序，选择排序；n ≤ I ≤ ~20）
+  for(let a = cap; a < n; a++){
+    let bK = a, bD = -1;
+    for(let b = a; b < n; b++){
+      const it = ewLnsPool[b];
+      const d = (m.itemValue[it] + ewLnsMaxPair[it]) / Math.max(1, m.plArea[m.itemPlOff[it]]);
+      if(d > bD){ bD = d; bK = b; }
+    }
+    if(bK !== a){ const tmp = ewLnsPool[a]; ewLnsPool[a] = ewLnsPool[bK]; ewLnsPool[bK] = tmp; }
+  }
+  let rem = avail, knap = 0;
+  for(let s = cap; s < n; s++){
+    const it = ewLnsPool[s];
+    const ar = m.plArea[m.itemPlOff[it]];
+    if(ar <= rem){ knap += m.itemValue[it]; rem -= ar; }
+    else { knap += m.itemValue[it] * rem / ar; break; }
+  }
+  let pair = 0;
+  for(let s = cap; s < n; s++) pair += ewLnsMaxPair[ewLnsPool[s]];
+  return ub + knap + (useB ? pair : 0);
+}
+// 受限 DFS anytime 修复：池件（拆出件+未放件，ewLnsPoolMark 标记，件号升序确定性入池）
+// 逐件分支枚举位（ΔE 升序 top-12），深度级 UB 剪枝，任一时点返回当前最好部分解。
+// 搜索本体零 RNG；undo 挂起（内部自维护回溯）；结束时恢复 curEnergy。
+// 返回 true 表示找到了优于 before 的部分解并已应用；失败时状态复原到拆除后。
+function ewLnsSearch(bE, bTotal, bItems, softMs, hardMs, nodeCap){
+  const m = ewModel, I = m.I, CAP = 12;
+  const t0 = performance.now();
+  ewLnsUbEpoch++;
+  let n = 0;
+  ewLnsMinArea = 63;
+  for(let it = 0; it < I; it++){
+    if(!ewLnsPoolMark[it]) continue;
+    ewLnsPool[n++] = it;
+    const ar = m.plArea[m.itemPlOff[it]];
+    if(ar < ewLnsMinArea) ewLnsMinArea = ar;
+  }
+  ewLnsPoolN = n;
+  if(n <= 0) return false;
+  ewUndoSuspend = true;
+  let sp = 0, nodes = 0, any = false;
+  let bestE = bE, bestItems = bItems;
+  const target = bTotal + 1e-9;
+  let completeFound = false;
+  for(;;){ // 迭代器驱动：弹未完成节点继续，否则回溯
+    let node = -1;
+    while(sp > 0){
+      if(ewLnsStackPtr[sp - 1] < ewLnsStackCnt[sp - 1]){ node = sp - 1; break; }
+      sp--;
+      ewApplyRemove(ewLnsStackIt[sp]); // 候选耗尽：回溯撤销该件
+    }
+    if(node < 0) break;
+    if(++nodes > nodeCap || performance.now() - t0 > hardMs) break; // anytime：预算耗尽取当前最好
+    if(sp === 0){ // 根节点：池件全序（面积降序，大件先放减少碎洞；平手件号升序确定性）
+      ewLnsStackCnt[0] = n;
+      for(let i = 0; i < n; i++) ewLnsStackIt[i] = ewLnsPool[i];
+      for(let a = 0; a < n; a++){
+        let bK = a, bA = -1;
+        for(let b = a; b < n; b++){
+          const ar = m.plArea[m.itemPlOff[ewLnsStackIt[b]]];
+          if(ar > bA || (ar === bA && ewLnsStackIt[b] < ewLnsStackIt[bK])){ bA = ar; bK = b; }
+        }
+        if(bK !== a){ const tmp = ewLnsStackIt[a]; ewLnsStackIt[a] = ewLnsStackIt[bK]; ewLnsStackIt[bK] = tmp; }
+      }
+      for(let i = 0; i < n; i++) ewLnsOrder[i] = ewLnsStackIt[i]; // 定序：深度 d 放 ewLnsOrder[d]
+      ewLnsStackPtr[0] = 0;
+      sp = 1;
+      continue;
+    }
+    const depth = sp - 1;
+    const ptr = ewLnsStackPtr[depth];
+    if(ptr === 0){ // 首次进入该节点：深度级 UB 剪枝 + 候选枚举
+      // 逐节点现算 UB（不同路径同深度棋盘态不同，缓存会错杀好分支；W*H≤42 开销可忽）
+      if(ewLnsUB(depth) <= target){ ewLnsStackCnt[depth] = 0; continue; } // UB ≤ incumbent → 剪枝
+      const it = ewLnsStackIt[depth];
+      const off = m.itemPlOff[it], len = m.itemPlLen[it];
+      let cnt = 0;
+      const cOff = depth * CAP;
+      for(let q = off, ke = off + len; q < ke; q++){
+        if(!ewMaskFits(q)) continue;
+        const e = ewDeltaE(ewDeltaFor(q, +1));
+        if(cnt < CAP){ // 插入排序按 ΔE 升序（CAP=12，O(CAP²) 可忽）
+          let ins = cnt;
+          while(ins > 0 && ewLnsCandE[cOff + ins - 1] > e){
+            ewLnsCandE[cOff + ins] = ewLnsCandE[cOff + ins - 1];
+            ewLnsCandP[cOff + ins] = ewLnsCandP[cOff + ins - 1];
+            ins--;
+          }
+          ewLnsCandE[cOff + ins] = e; ewLnsCandP[cOff + ins] = q;
+          cnt++;
+        }else if(e < ewLnsCandE[cOff + CAP - 1]){ // 替换末位再下沉
+          let ins = CAP - 1;
+          while(ins > 0 && ewLnsCandE[cOff + ins - 1] > e){
+            ewLnsCandE[cOff + ins] = ewLnsCandE[cOff + ins - 1];
+            ewLnsCandP[cOff + ins] = ewLnsCandP[cOff + ins - 1];
+            ins--;
+          }
+          ewLnsCandE[cOff + ins] = e; ewLnsCandP[cOff + ins] = q;
+        }
+      }
+      ewLnsStackCnt[depth] = cnt;
+    }
+    if(ewLnsStackPtr[depth] >= ewLnsStackCnt[depth]) continue; // 无候选：下轮弹出回溯
+    const it = ewLnsStackIt[depth];
+    const q = ewLnsCandP[depth * CAP + ewLnsStackPtr[depth]++];
+    ewApplyAdd(it, q);
+    any = true;
+    if(depth + 1 === n){ // 叶子：全池已放，评估晋级
+      const eNow = ewScalarOf(true, curBase, ewMeta.useBonus ? curBonus : 0, curManW, curDefW, curAdj, curItems, curArea);
+      if(eNow < bestE - 1e-9){ // 严格改进才晋级（平手留给外层 SA 会引入平台随机游走退化）
+        bestE = eNow; bestItems = curItems; ewLnsBestSol.set(solPl); ewLnsBestItems = curItems;
+      }
+      if(ewCompleteFlag()){ completeFound = true; break; } // 完整修复：anytime 提前终止
+      ewApplyRemove(it);
+    }else{
+      ewLnsStackIt[depth + 1] = ewLnsOrder[depth + 1]; // 深度 d 固定放第 d 件（根序已定）
+      ewLnsStackPtr[depth + 1] = 0; ewLnsStackCnt[depth + 1] = 0;
+      sp++;
+    }
+  }
+  // 回溯清空残栈（恢复拆除后状态）
+  while(sp > 0){ sp--; ewApplyRemove(ewLnsStackIt[sp]); }
+  ewUndoSuspend = false;
+  curEnergy = ewScalarOf(ewCompleteFlag(), curBase, ewMeta.useBonus ? curBonus : 0, curManW, curDefW, curAdj, curItems, curArea);
+  const improved = any && bestE < bE - 1e-9; // 严格优于 before 才应用（拒绝平手，防外层 SA 平台随机游走）
+  if(improved){
+    for(let it = 0; it < I; it++) if(solPl[it] >= 0) ewApplyRemove(it);
+    for(let it = 0; it < I; it++){ const p = ewLnsBestSol[it]; if(p >= 0 && m.plItem[p] === it) ewApplyAdd(it, p); }
+  }
+  return improved;
+}
+// LNS 算子（op7=lnsSmall / op8=lnsBig）：摧毁 → anytime DFS 修复 → 晋级或失败记账。
+// k 自适应：成功+1 / 失败-1，限 [2,10]；失败组合（small/big×k）短期缓存避免立即重试
+// （缓存命中仍消耗一次 RNG 保持流次序确定）。返回 false 时状态与进入前逐字一致。
+function ewLnsOp(small){
+  const m = ewModel;
+  if(curItems < 2) return false;
+  let k = small ? ewLnsKSmall : ewLnsKBig;
+  if(k > curItems) k = curItems;
+  const tag = (small ? 0 : 1) * 16 + k;
+  for(let c = 0; c < ewLnsFailN; c++){
+    if(ewLnsFailVal[c] === tag && iters - ewLnsFailIter[c] < 4096){ ewRand(); return false; }
+  }
+  const checkpoint = ewUndoTop;
+  const r = ewRand();
+  let dn;
+  if(r < 0.34) dn = ewLnsDestroyRandom(k);
+  else if(r < 0.67) dn = ewLnsDestroyWorst(k);
+  else dn = ewLnsDestroyRegion(k);
+  if(dn < 2){ ewUndoTop = checkpoint; return false; }
+  for(let q = 0; q < dn; q++){ ewLnsOriginPl[q] = solPl[touchedList[q]]; ewApplyRemove(touchedList[q]); }
+  // 候选池 = 拆出件 + 全部未放件（poolMark 标记，DFS 内按件号升序确定性入池）
+  ewLnsPoolMark.fill(0);
+  for(let q = 0; q < dn; q++) ewLnsPoolMark[touchedList[q]] = 1;
+  for(let it = 0; it < m.I; it++) if(solPl[it] < 0) ewLnsPoolMark[it] = 1;
+  const bE = ewCurrentScalar(), bTotal = curBase + curBonus, bItems = curItems;
+  const ok = ewLnsSearch(bE, bTotal, bItems, 500, 500, 200000);
+  ewUndoTop = checkpoint; // 摧毁期 undo 日志（DFS 内部挂起不记）截栈丢弃
+  if(ok){
+    if(small){ if(ewLnsKSmall < 10) ewLnsKSmall++; }
+    else if(ewLnsKBig < 10) ewLnsKBig++;
+    return true;
+  }
+  // 失败：状态复原（DFS 已回溯到拆除态）→ 逐件放回原位
+  for(let q = 0; q < dn; q++){
+    const it = touchedList[q];
+    if(solPl[it] < 0) ewApplyAdd(it, ewLnsOriginPl[q]);
+  }
+  if(small){ if(ewLnsKSmall > 2) ewLnsKSmall--; }
+  else if(ewLnsKBig > 2) ewLnsKBig--;
+  if(ewLnsFailN < 8){ ewLnsFailVal[ewLnsFailN] = tag; ewLnsFailIter[ewLnsFailN] = iters; ewLnsFailN++; }
+  return false;
+}
+
 function ewInitOps(){
-  opWeights = new Float64Array(7).fill(1);
-  opPrefix = new Float64Array(7);
-  segScores = new Float64Array(7);
-  segCounts = new Float64Array(7);
+  opWeights = new Float64Array(9).fill(1);
+  opPrefix = new Float64Array(9);
+  segScores = new Float64Array(9);
+  segCounts = new Float64Array(9);
+  opWeights[7] = 0.6; opWeights[8] = 0.6; // LNS 重算子初值略低（单次耗时长），段式计分自然升降
+  ewInitLns();
 }
 function ewPickOp(){
   let s = 0;
-  for(let i = 0; i < 7; i++){ s += opWeights[i]; opPrefix[i] = s; }
+  for(let i = 0; i < 9; i++){ s += opWeights[i]; opPrefix[i] = s; }
   const r = ewRand() * s;
-  for(let i = 0; i < 7; i++) if(r < opPrefix[i]) return i;
-  return 6;
+  for(let i = 0; i < 9; i++) if(r < opPrefix[i]) return i;
+  return 8;
 }
 function ewRunOp(op){
   if(op === 0) return ewOpRelocate();
@@ -565,15 +875,18 @@ function ewRunOp(op){
     if(ewCompleteFlag()) return ewOpRelocate();
     return ewOpInsertMissing();
   }
+  if(op === 7) return ewLnsOp(1); // lnsSmall：k 小（满盘僵局局部重排）
+  if(op === 8) return ewLnsOp(0); // lnsBig：k 大（跨盆地件组合换血）
   // op6：逃逸重建（B 档件组合困局专用）
   return ewOpEscapeRebuild();
 }
 function ewSegmentUpdate(){
-  for(let i = 0; i < 7; i++){
+  for(let i = 0; i < 9; i++){
     const score = segCounts[i] > 0 ? segScores[i] / segCounts[i] : 0;
     // 逃逸重建保底权重 1.0：其收益（换件组合/跨盆地）需多步才显现，段式计分
-    // 短视会把它衰减掉导致 B 档困局复发；保持 ~1/8 的算子份额
-    const lo = i === 6 ? 1.0 : 0.1;
+    // 短视会把它衰减掉导致 B 档困局复发；保持 ~1/8 的算子份额。
+    // LNS 保底 0.3：重算子单次收益高但频率需求低，维持最低探索份额。
+    const lo = i === 6 ? 1.0 : (i >= 7 ? 0.3 : 0.1);
     opWeights[i] = Math.min(10, Math.max(lo, opWeights[i] * 0.9 + 0.1 * score));
     segScores[i] = 0; segCounts[i] = 0;
   }
@@ -1097,7 +1410,13 @@ function engWorkerStateDecls(){
     + 'var ewRefineTopBuf=null;'
     + 'var ewScratchSol=null;'
     + 'var ewNodeLimit=0,ewLastReheatIter=0;\n'
-    + 'var ewMidRestart=0;\n';
+    + 'var ewMidRestart=0;\n'
+    + 'var ewLnsKSmall=3,ewLnsKBig=6,ewLnsFailVal=null,ewLnsFailIter=null,ewLnsFailN=0;\n'
+    + 'var ewLnsPoolMark=null,ewLnsMaxPair=null,ewLnsMinArea=0,ewLnsPool=null,ewLnsPoolN=0;\n'
+    + 'var ewLnsStackIt=null,ewLnsStackPtr=null,ewLnsStackCnt=null,ewLnsOrder=null;\n'
+    + 'var ewLnsCandP=null,ewLnsCandE=null,ewLnsCandOff=null;\n'
+    + 'var ewLnsUbAt=null,ewLnsUbVal=null,ewLnsUbEpoch=0;\n'
+    + 'var ewLnsOriginPl=null,ewLnsBestSol=null,ewLnsBestItems=0;\n';
 }
 function engWorkerPartFunctions(){
   return [
@@ -1117,6 +1436,8 @@ function engWorkerPartFunctions(){
     ewRebuildExpTable, ewAcceptTest,
     ewOpRelocate, ewOpMoveGreedy, ewOpSwapPair, ewOpRemoveInsert,
     ewOpShuffleRegion, ewOpInsertMissing, ewOpEscapeRebuild,
+    ewInitLns, ewLnsDestroyRandom, ewLnsDestroyWorst, ewLnsDestroyRegion,
+    ewLnsUB, ewLnsSearch, ewLnsOp,
     ewInitOps, ewPickOp, ewRunOp, ewSegmentUpdate,
     ewInitialSolution, ewLoadSolution,
     ewSendProgress, ewSendDone, ewDrainMessages, ewRejectRestore,
