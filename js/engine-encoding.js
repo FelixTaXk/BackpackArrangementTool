@@ -150,84 +150,69 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
   }
 
   // ---- CSR 邻接对表：几何相邻（双向 OR）的物品摆放对 ----
-  // 格子桶法：按格子登记占用摆放，仅对“占用同一格或相邻格”的摆放对做精确掩码判定，
-  // 复杂度由 O(P²) 降为 O(Σ桶内对)；候选排序后逐项判定，输出与全对扫描逐字一致。
+  // 格子桶法：按格子登记占用摆放，仅对“占用同一格或相邻格”的摆放对做判定，复杂度由
+  // O(P²) 降为 O(Σ桶内对)；同趟预算每摆放外圈环表（csrRingOff/csrRingCell），枚举阶段
+  // 免逐格 r/c 运算与边界分支。候选排序后逐项判定，输出与全对扫描逐字一致。
   const cellBucket = new Array(W * H);
   for(let c = 0; c < W * H; c++) cellBucket[c] = [];
+  const csrRingOff = new Uint32Array(P + 1);
+  const csrRingCell = new Uint16Array(totalCells * 4); // 每格最多 4 个外圈邻居（去重后更少）
+  const ringStamp = new Int32Array(W * H);
+  let ringEpoch = 0, ringT = 0;
   for(let a = 0; a < P; a++){
     const off = plCellsOff[a], len = plCellsLen[a];
-    for(let k = 0; k < len; k++) cellBucket[cellsFlat[off + k]].push(a);
+    csrRingOff[a] = ringT;
+    ringEpoch++;
+    for(let k = 0; k < len; k++){
+      const cell = cellsFlat[off + k];
+      cellBucket[cell].push(a);
+      const r = (cell / W) | 0, c = cell % W;
+      if(r > 0 && ringStamp[cell - W] !== ringEpoch){ ringStamp[cell - W] = ringEpoch; csrRingCell[ringT++] = cell - W; }
+      if(r + 1 < H && ringStamp[cell + W] !== ringEpoch){ ringStamp[cell + W] = ringEpoch; csrRingCell[ringT++] = cell + W; }
+      if(c > 0 && ringStamp[cell - 1] !== ringEpoch){ ringStamp[cell - 1] = ringEpoch; csrRingCell[ringT++] = cell - 1; }
+      if(c + 1 < W && ringStamp[cell + 1] !== ringEpoch){ ringStamp[cell + 1] = ringEpoch; csrRingCell[ringT++] = cell + 1; }
+    }
   }
+  csrRingOff[P] = ringT;
   const seenStamp = new Int32Array(P);
   let stampEpoch = 0;
-  const scratch = new Int32Array(P); // 候选暂存：TypedArray 原生数值排序，免比较器与 JS 数组分配
+  const scratch = new Int32Array(P); // 候选计数暂存（容量上界）；升序输出改由 candMark 线性扫描产出
+  const candMark = new Int32Array(P); // 候选标记：candMark[b]===stampEpoch 则 b 为本行候选（扫描 b=0..P-1 即升序）
   const plItemJ = new Array(P);      // JS 数组缓存热字段，避免逐候选的 TypedArray 读取
   for(let x = 0; x < P; x++) plItemJ[x] = plItem[x];
-  const cellStamp = new Int32Array(W * H); // 外圈格子级去重：同一外圈格只扫一次桶
-  let cellEpoch = 0;
+  const cellStamp = new Int32Array(W * H); // 外圈格子级去重：同一外圈格只扫一次桶（用 a+1 作戳，免 epoch 维护）
   const adjOffTmp = new Uint32Array(P + 1);
   let adjBuf = new Int32Array(Math.max(1024, P * 32)); // 倍增容量，收尾截断，免逐元素 push
   let eFlat = 0;
   for(let a = 0; a < P; a++){
-    stampEpoch++; cellEpoch++;
+    stampEpoch++;
     const itA = plItemJ[a];
-    const off = plCellsOff[a], len = plCellsLen[a];
     let n = 0;
-    // 纯外圈枚举：b 相邻 a ⟺ b 占用 a 外圈任一格（外圈 = 各格四邻居去重并集）。
+    // 纯外圈枚举：b 相邻 a ⟺ b 占用 a 外圈任一格（外圈 = 各格四邻居去重并集，环表已预算）。
     // U 形自邻（自身格属外圈）自然覆盖；几何保证免掩码 AND，逐字等价旧暴力口径。
-    for(let k = 0; k < len; k++){
-      const cell = cellsFlat[off + k];
-      const r = (cell / W) | 0, c = cell % W;
-      if(r > 0 && cellStamp[cell - W] !== cellEpoch){
-        cellStamp[cell - W] = cellEpoch;
-        const bucket = cellBucket[cell - W];
-        for(let t = 0; t < bucket.length; t++){
-          const b = bucket[t];
-          if(b === a || seenStamp[b] === stampEpoch) continue;
-          seenStamp[b] = stampEpoch;
-          if(plItemJ[b] !== itA) scratch[n++] = b;
-        }
-      }
-      if(r + 1 < H && cellStamp[cell + W] !== cellEpoch){
-        cellStamp[cell + W] = cellEpoch;
-        const bucket = cellBucket[cell + W];
-        for(let t = 0; t < bucket.length; t++){
-          const b = bucket[t];
-          if(b === a || seenStamp[b] === stampEpoch) continue;
-          seenStamp[b] = stampEpoch;
-          if(plItemJ[b] !== itA) scratch[n++] = b;
-        }
-      }
-      if(c > 0 && cellStamp[cell - 1] !== cellEpoch){
-        cellStamp[cell - 1] = cellEpoch;
-        const bucket = cellBucket[cell - 1];
-        for(let t = 0; t < bucket.length; t++){
-          const b = bucket[t];
-          if(b === a || seenStamp[b] === stampEpoch) continue;
-          seenStamp[b] = stampEpoch;
-          if(plItemJ[b] !== itA) scratch[n++] = b;
-        }
-      }
-      if(c + 1 < W && cellStamp[cell + 1] !== cellEpoch){
-        cellStamp[cell + 1] = cellEpoch;
-        const bucket = cellBucket[cell + 1];
-        for(let t = 0; t < bucket.length; t++){
-          const b = bucket[t];
-          if(b === a || seenStamp[b] === stampEpoch) continue;
-          seenStamp[b] = stampEpoch;
-          if(plItemJ[b] !== itA) scratch[n++] = b; // 同件物品不同摆放互斥，不必入表
-        }
+    const rn0 = csrRingOff[a], rn1 = csrRingOff[a + 1];
+    for(let e = rn0; e < rn1; e++){
+      const rc = csrRingCell[e];
+      if(cellStamp[rc] === a + 1) continue; // 格子级去重：同一外圈格只扫一次桶（epoch=a+1 免清零）
+      cellStamp[rc] = a + 1;
+      const bucket = cellBucket[rc];
+      for(let t = 0; t < bucket.length; t++){
+        const b = bucket[t];
+        if(b === a || seenStamp[b] === stampEpoch) continue;
+        seenStamp[b] = stampEpoch;
+        if(plItemJ[b] !== itA){ scratch[n++] = b; candMark[b] = stampEpoch; } // 同件物品不同摆放互斥，不必入表
       }
     }
-    const part = scratch.subarray(0, n).sort(); // 升序与旧全对扫描遍历顺序一致，CSR 内容逐字不变
     adjOffTmp[a] = eFlat;
     if(eFlat + n > adjBuf.length){
       const nb = new Int32Array(Math.max(adjBuf.length * 2, eFlat + n));
       nb.set(adjBuf.subarray(0, eFlat));
       adjBuf = nb;
     }
-    adjBuf.set(part, eFlat);
-    eFlat += n;
+    // 升序输出：线性扫描标记（O(P)，免逐行比较排序；与旧全对扫描遍历顺序一致，CSR 内容逐字不变）
+    for(let b = 0; b < P; b++){
+      if(candMark[b] === stampEpoch) adjBuf[eFlat++] = b;
+    }
   }
   adjOffTmp[P] = eFlat;
   const E = eFlat;
@@ -256,18 +241,19 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
       pairBonusTable[i * I + j] = scorePotentialPairBonus(tmpA, tmpB);
     }
   }
-  // JS 数组缓存：边循环查表免 TypedArray 读取
+  // JS 数组缓存：边循环查表免 TypedArray 读取；行不变量（mwA/dwA）外提
   const itemMwJ = Array.from(itemMw), itemDwJ = Array.from(itemDw), pairBonusJ = Array.from(pairBonusTable);
   let e = 0;
   for(let a = 0; a < P; a++){
     const ia = plItemJ[a], iaI = ia * I;
+    const mwA = itemMwJ[ia], dwA = itemDwJ[ia];
     const end = adjOff[a + 1];
     for(let t = adjOff[a]; t < end; t++){
       const b = adjFlat[t], ib = plItemJ[b];
       adjPeer[e] = b;
       adjBonus[e] = pairBonusJ[iaI + ib];
-      adjManW[e] = itemMwJ[ia] + itemMwJ[ib];  // 双向手动优先级加权和
-      adjDefW[e] = itemDwJ[ia] + itemDwJ[ib];  // 双向默认优先级加权和
+      adjManW[e] = mwA + itemMwJ[ib];  // 双向手动优先级加权和
+      adjDefW[e] = dwA + itemDwJ[ib];  // 双向默认优先级加权和
       e++;
     }
   }
@@ -317,6 +303,7 @@ function encBuildBundle(model){
     segs.push({name, arr, start});
   }
   const buffer = new ArrayBuffer(size);
+  const fullView = new Uint8Array(buffer); // 单次全缓冲视图：段拷贝走字节 memcpy，免逐段 TypedArray 构造
   const head = new Int32Array(buffer, 0, 10);
   head[0] = model.W; head[1] = model.H; head[2] = model.L; head[3] = model.I; head[4] = model.K;
   head[5] = model.P; head[6] = model.manualCount; head[7] = model.defaultTierCount;
@@ -328,8 +315,7 @@ function encBuildBundle(model){
     statKeys: model.statKeys.slice()
   };
   for(const s of segs){
-    const Ctor = s.arr.constructor;
-    new Ctor(buffer, s.start, s.arr.length).set(s.arr);
+    fullView.set(new Uint8Array(s.arr.buffer, s.arr.byteOffset, s.arr.byteLength), s.start);
     offsets[s.name] = {byteOffset: s.start, length: s.arr.length};
   }
   return {buffer, offsets};

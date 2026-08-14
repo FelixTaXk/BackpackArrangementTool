@@ -28,6 +28,7 @@ var curT = 1, T0 = 1, Tmin = 0, expTable = null;
 var iters = 0, started = 0, deadline = 0, stoppedFlag = false;
 var reheatCount = 0, lastImproveIter = 0, acceptCount = 0, totalMoves = 0;
 var ewNodeLimit = 0, ewLastReheatIter = 0; // 主循环分片（P4）：跨片续跑的边界状态
+var ewMidRestart = 0; // 中期强制逃逸：重热 8 次仍停滞时从 best 扰动重启（纯状态触发，复现性不变）
 var segScores = null, segCounts = null, opWeights = null, opPrefix = null;
 var lastProgress = 0, lastIncumbent = 0, lastSwapReq = 0;
 var bfsVisited = null, bfsQueue = null, regionStamp = null, touchedList = null;
@@ -39,6 +40,8 @@ var ewUndoIt = null, ewUndoPl = null, ewUndoTop = 0, ewUndoSuspend = false;
 // 环邻接表（init 期预算）：每摆放的外圈格子列表；配合 cellOwner 实现 O(环长) 增量扫描，
 // 避开 CSR 大度数（plen 多时 CSR 度可达上百条边）；pair 分值同步预算为 I×I 表
 var ewNbrOff = null, ewNbrCell = null, ewPairBonus = null, ewPairManW = null, ewPairDefW = null;
+var ewRefineTopBuf = null; // removeInsert 未放件价值 top-6 复用缓冲（热路径零分配）
+var ewScratchSol = null;   // 收尾多端点精化的当前解缓冲
 
 // ------------------------- xorshift128+ RNG -------------------------
 function ewRngSeed(seed){
@@ -60,11 +63,13 @@ function ewRandInt(n){ return (ewRand() * n) | 0; }
 function ewCompleteFlag(){ return curItems + ((ewMeta && ewMeta.skippedCount) || 0) === requiredItemsTarget; }
 function ewScalarOf(c, base, bonus, manW, defW, adj, items, area){
   const total = base + bonus;
-  // 标量化与字典序对齐（P2 根因修复）：cmpBest 优先级 total > manW > defW，但 1e8/1e5 权重项的
-  // 单步变化量（可达 1e10+）远超 Δtotal（~1e3），若入能量会把搜索降级为 defW 驱动、
-  // total 永远追不上 DFS。故 manW/defW 不入能量（仍增量跟踪用于上报/契约序列化），
-  // SA 专注最大化 complete → total → adj 主链。
-  return -((c ? 1e12 : 0) + total + 10 * adj + items + 1e-3 * area);
+  // 标量化与字典序对齐（P2 根因修复）：cmpBest 优先级 total > manW > defW > adj，但
+  // manW/defW 单步变化量（可达 1e10+）远超 Δtotal，入能量会把搜索降级为 defW 驱动，
+  // 故不入能量（仍增量跟踪用于上报/契约序列化）。adj 曾取权重 50，但实测它会把
+  // totalScore 差 1-5 分的 bonus 位形挤出去（SA adj=25>DFS 21 却 bonus 低 2.76 分），
+  // 与字典序（total 先于 adj）方向相反；降为 1e-3 尾部平手项，保证任何 Δtotal≥0.01
+  // 都压过任意 Δadj，与 compareSolverBest 口径一致。
+  return -((c ? 1e12 : 0) + total + items + 1e-3 * adj + 1e-4 * area);
 }
 function ewCurrentScalar(){
   return curEnergy;
@@ -352,22 +357,30 @@ function ewOpRemoveInsert(){
   const m = ewModel;
   // 背包未满时先尝试直接插入（净增 1 件），失败再撤一进一（件数不变）
   if(curItems < m.I && ewOpInsertMissing()) return true;
-  // 移除边际贡献最低者：边际 = value + useBonus 下的邻接加成 + 优先级加权
-  let worstIt = -1, worstGain = Infinity;
-  for(let k = 0; k < curItems; k++){
-    const it = placedOrder[k];
-    const p = solPl[it];
-    const d = ewDeltaFor(p, -1);
-    const gain = -(d.base + (m.useBonus ? d.bonus : 0) + 1e-6 * (d.manW * 1e2 + d.defW) + d.adj);
-    if(gain < worstGain){ worstGain = gain; worstIt = it; }
+  // 移除目标：50% 贪心选边际贡献最低者（定向换件）+ 50% 随机选（多样性探索，
+  // 纯贪心会因目标件边际非最低而永远无法换出，B 档件组合困局的出路）
+  // 边际 = value + useBonus 下的邻接加成 + 优先级加权
+  let worstIt = -1;
+  if(ewRand() < 0.5){
+    let worstGain = Infinity;
+    for(let k = 0; k < curItems; k++){
+      const it = placedOrder[k];
+      const p = solPl[it];
+      const d = ewDeltaFor(p, -1);
+      const gain = -(d.base + (m.useBonus ? d.bonus : 0) + 1e-6 * (d.manW * 1e2 + d.defW) + d.adj);
+      if(gain < worstGain){ worstGain = gain; worstIt = it; }
+    }
+  }else{
+    worstIt = placedOrder[ewRandInt(curItems)];
   }
   ewApplyRemove(worstIt);
-  // 贪心插入最优未放件（每件摆放枚举抽样上限 48，控制热路径成本）
+  // 贪心插入最优未放件：全枚举未放件（背包未满时通常 ≤4 件）× 抽样位 cap 32；
+  // 未放件集小，件维全扫不漏换件对象，位维抽样保迭代速度
   let bestIt = -1, bestP = -1, bestE = 0;
   for(let it = 0; it < m.I; it++){
     if(solPl[it] >= 0) continue;
     const off = m.itemPlOff[it], len = m.itemPlLen[it];
-    const step = len > 48 ? ((len / 48) | 0) || 1 : 1;
+    const step = len > 32 ? ((len / 32) | 0) || 1 : 1;
     for(let t = 0, k = 0; t < len; t += step, k = (k + step) % len){
       const q = off + k;
       if(!ewMaskFits(q)) continue;
@@ -431,18 +444,14 @@ function ewOpShuffleRegion(){
   }
   if(tCount < 2) return false;
   for(let k = 0; k < tCount; k++) ewApplyRemove(touchedList[k]);
-  // 腾出的空间优先喂未放件（通往 complete 的关键通道）：随机抽至多 2 件未放件、
-  // 抽样位贪心（控制热路径成本；全枚举会把迭代速度拖垮一个量级）
+  // 腾出的空间逐件喂全部未放件（通往 complete 与件组合换血的关键通道；
+  // 未放件通常 ≤4 件，全扫成本可控；只抽 2 件会错过正确换件对象）
   if(curItems < m.I){
-    for(let trial = 0; trial < 2; trial++){
-      let cnt = 0;
-      for(let it = 0; it < m.I; it++) if(solPl[it] < 0) cnt++;
-      if(cnt === 0) break;
-      let pick = ewRandInt(cnt), missIt = -1;
-      for(let k = 0; k < m.I; k++){ if(solPl[k] < 0){ if(pick === 0){ missIt = k; break; } pick--; } }
+    for(let missIt = 0; missIt < m.I; missIt++){
+      if(solPl[missIt] >= 0) continue;
       const off = m.itemPlOff[missIt], len = m.itemPlLen[missIt];
       let bestP = -1, bestE = Infinity;
-      const step = len > 48 ? ((len / 48) | 0) || 1 : 1;
+      const step = len > 24 ? ((len / 24) | 0) || 1 : 1;
       const start = ewRandInt(len);
       for(let t = 0, k = start; t < len; t += step, k = (k + step) % len){
         const q = off + k;
@@ -466,7 +475,7 @@ function ewOpShuffleRegion(){
     if(solPl[it] >= 0) continue; // 未放件插入阶段可能已把该件放回（避免双重添加）
     const off = m.itemPlOff[it], len = m.itemPlLen[it];
     let bestP = -1, bestE = 0;
-    const step = len > 48 ? ((len / 48) | 0) || 1 : 1;
+    const step = len > 32 ? ((len / 32) | 0) || 1 : 1;
     for(let t = 0, k = 0; t < len; t += step, k = (k + step) % len){
       const q = off + k;
       if(!ewMaskFits(q)) continue;
@@ -478,33 +487,94 @@ function ewOpShuffleRegion(){
   }
   return true;
 }
-
-// ------------------------- 段式权重与轮盘赌 -------------------------
+// 逃逸重建（op6）：随机拆除 k 件已放件，候选池 = 拆除件 + 全部未放件，
+// 按价值降序贪心重填。与 shuffleRegion（连通小区域）互补：大范围破坏能跨越
+// “换件组合”能垒（B 档困局：撤换单件的中间态能量差 ~600 分，逐件算子无法接受）。
+// big=1 时拆 5-8 件（polish 大扰动，跨越更远盆地），否则 3-5 件。
+function ewOpEscapeRebuild(big){
+  const m = ewModel;
+  if(curItems < 2) return false;
+  const k = big ? 5 + ewRandInt(4) : 3 + ewRandInt(3);
+  // 随机不重复选 k 件（拒绝采样，件数≤16 时碰撞少）
+  let tCount = 0;
+  regionStamp.fill(0);
+  while(tCount < k && tCount < curItems){
+    const it = placedOrder[ewRandInt(curItems)];
+    if(regionStamp[it]) continue;
+    regionStamp[it] = 1;
+    touchedList[tCount++] = it;
+  }
+  if(tCount < 2) return false;
+  for(let q = 0; q < tCount; q++) ewApplyRemove(touchedList[q]);
+  // 候选池：拆除件 + 未放件，价值降序（加小随机抖动避免确定性陷阱；
+  // touchedList 前段复用为候选池，tCount 为池长）
+  for(let it = 0; it < m.I; it++){
+    if(solPl[it] < 0 && regionStamp[it] === 0) touchedList[tCount++] = it;
+  }
+  // 选择排序按 value 降序（池长 ≤ I ≤ 16，O(n²) 可忽）
+  for(let a = 0; a < tCount; a++){
+    let bestK = a;
+    for(let b = a + 1; b < tCount; b++){
+      const vb = m.itemValue[touchedList[b]], vk = m.itemValue[touchedList[bestK]];
+      if(vb > vk || (vb === vk && touchedList[b] < touchedList[bestK])) bestK = b;
+    }
+    if(bestK !== a){ const tmp = touchedList[a]; touchedList[a] = touchedList[bestK]; touchedList[bestK] = tmp; }
+    const it = touchedList[a];
+    if(solPl[it] >= 0) continue;
+    const off = m.itemPlOff[it], len = m.itemPlLen[it];
+    let bestP = -1, bestE = Infinity;
+    // polish 路径（big=1）全枚举位，收尾闭合 bonus 尾部差距；热循环路径抽样保速度
+    const step = big ? 1 : (len > 32 ? ((len / 32) | 0) || 1 : 1);
+    const start = ewRandInt(len);
+    for(let t = 0, qq = start; t < len; t += step, qq = (qq + step) % len){
+      const q = off + qq;
+      if(!ewMaskFits(q)) continue;
+      const d = ewDeltaFor(q, +1);
+      const e = ewDeltaE(d);
+      if(e < bestE){ bestE = e; bestP = q; }
+    }
+    if(bestP >= 0) ewApplyAdd(it, bestP);
+  }
+  return true;
+}
 function ewInitOps(){
-  opWeights = new Float64Array(6).fill(1);
-  opPrefix = new Float64Array(6);
-  segScores = new Float64Array(6);
-  segCounts = new Float64Array(6);
+  opWeights = new Float64Array(7).fill(1);
+  opPrefix = new Float64Array(7);
+  segScores = new Float64Array(7);
+  segCounts = new Float64Array(7);
 }
 function ewPickOp(){
   let s = 0;
-  for(let i = 0; i < 6; i++){ s += opWeights[i]; opPrefix[i] = s; }
+  for(let i = 0; i < 7; i++){ s += opWeights[i]; opPrefix[i] = s; }
   const r = ewRand() * s;
-  for(let i = 0; i < 6; i++) if(r < opPrefix[i]) return i;
-  return 5;
+  for(let i = 0; i < 7; i++) if(r < opPrefix[i]) return i;
+  return 6;
 }
 function ewRunOp(op){
   if(op === 0) return ewOpRelocate();
   if(op === 1) return ewOpMoveGreedy();
   if(op === 2) return ewOpSwapPair();
-  if(op === 3) return ewOpRemoveInsert();
+  if(op === 3){
+    // complete 下“撤一进一”等价于昂贵的坏 relocate（件数已达标，净增通道无意义）：改走廉价重定位
+    if(ewCompleteFlag()) return ewOpRelocate();
+    return ewOpRemoveInsert();
+  }
   if(op === 4) return ewOpShuffleRegion();
-  return ewOpInsertMissing();
+  // complete 下无未放件，insertMissing 空扫 O(I) 后返回 false：改走重定位保持迭代有效
+  if(op === 5){
+    if(ewCompleteFlag()) return ewOpRelocate();
+    return ewOpInsertMissing();
+  }
+  // op6：逃逸重建（B 档件组合困局专用）
+  return ewOpEscapeRebuild();
 }
 function ewSegmentUpdate(){
-  for(let i = 0; i < 6; i++){
+  for(let i = 0; i < 7; i++){
     const score = segCounts[i] > 0 ? segScores[i] / segCounts[i] : 0;
-    opWeights[i] = Math.min(10, Math.max(0.1, opWeights[i] * 0.9 + 0.1 * score));
+    // 逃逸重建保底权重 1.0：其收益（换件组合/跨盆地）需多步才显现，段式计分
+    // 短视会把它衰减掉导致 B 档困局复发；保持 ~1/8 的算子份额
+    const lo = i === 6 ? 1.0 : 0.1;
+    opWeights[i] = Math.min(10, Math.max(lo, opWeights[i] * 0.9 + 0.1 * score));
     segScores[i] = 0; segCounts[i] = 0;
   }
 }
@@ -648,12 +718,14 @@ function ewCalibrateT0(tempIndex){
   curT = Math.max(Tmin, T0 * Math.pow(0.85, tempIndex));
 }
 
-// ------------------------- 收尾精化（确定性 1-relocate 局部最优，零 RNG 消耗） -------------------------
-// SA 收尾后对当前解循环全枚举单件最优重定位，直到一轮无改进；complete 下件数不变，
-// 直接收紧 total/adj 尾部差距（不受温度/接受概率干扰）。
-function ewRefineSolution(){
+// ------------------------- 收尾精化（确定性局部最优，零 RNG 消耗） -------------------------
+// 阶段一：1-relocate 全枚举单件最优重定位，直到一轮无改进；
+// 阶段二：2-pair 配对重定位（两件同时换摆），覆盖单件不可达的联合位形（SA 与 DFS
+// 尾部差距多来自此处）。complete 下件数不变，直接收紧 total/adj。
+function ewRefineSolution(deep){
   const m = ewModel;
   ewUndoSuspend = true;
+  // 阶段一：1-relocate
   for(let round = 0; round < 8; round++){
     let improved = false;
     for(let s = 0; s < curItems; s++){
@@ -675,13 +747,156 @@ function ewRefineSolution(){
     }
     if(!improved) break;
   }
+  // 阶段二：2-pair 配对重定位全枚举（I≤16 → ≤120 对；单对笛卡尔积 cap 2500，总评估量有界）。
+  // 覆盖单件不可达的联合位形（SA 与 DFS 尾部差距多来自此处），多轮直到无改进。
+  for(let round = 0; round < 3; round++){
+    let improved = false;
+    const n = curItems;
+    for(let sa = 0; sa < n; sa++){
+      for(let sb = sa + 1; sb < n; sb++){
+        const A = placedOrder[sa], B = placedOrder[sb];
+      const pA = solPl[A], pB = solPl[B];
+      if(pA < 0 || pB < 0) continue;
+      const offA = m.itemPlOff[A], lenA = m.itemPlLen[A];
+      const offB = m.itemPlOff[B], lenB = m.itemPlLen[B];
+      if(lenA * lenB > 2500) continue; // 超大笛卡尔积对跳过，保持收尾有界
+      ewApplyRemove(A);
+      ewApplyRemove(B);
+      let bA = pA, bB = pB, bestE = 0; // 基线=原位组合（双撤后逐件还原的总 delta 恰为 0）
+      for(let ka = 0; ka < lenA; ka++){
+        const qa = offA + ka;
+        if(!ewMaskFits(qa)) continue;
+        const eA = ewDeltaE(ewDeltaFor(qa, +1)); // 候选总 delta = ΔA + ΔB，旧版只比 ΔB 会误判
+        ewApplyAdd(A, qa);
+        for(let kb = 0; kb < lenB; kb++){
+          const qb = offB + kb;
+          if(!ewMaskFits(qb)) continue;
+          const e = eA + ewDeltaE(ewDeltaFor(qb, +1));
+          if(e < bestE - 1e-9){ bestE = e; bA = qa; bB = qb; }
+        }
+        ewApplyRemove(A);
+      }
+      ewApplyAdd(A, bA);
+      ewApplyAdd(B, bB);
+        if(bA !== pA || bB !== pB) improved = true;
+      }
+    }
+    if(!improved) break;
+  }
+  // 阶段三：3 件局部洗牌（随机抽样三元组×全位重填）：2-pair 无法跨越需要
+  // 三件联动的位形（bonus 尾部差距的常见来源）。抽样 48 个（可重复）三元组；
+  // 全枚举 C(n,3) 实测耗时翻倍无收益，回退抽样。
+  // 仅 deep（polish）执行：全位枚举较重，初始基线 refine 不跑以免挤占搜索预算。
+  if(deep && curItems >= 3){
+    for(let trial = 0; trial < 96; trial++){
+      touchedList[0] = placedOrder[ewRandInt(curItems)];
+      touchedList[1] = placedOrder[ewRandInt(curItems)];
+      touchedList[2] = placedOrder[ewRandInt(curItems)];
+      if(touchedList[0] === touchedList[1] || touchedList[1] === touchedList[2] || touchedList[0] === touchedList[2]) continue;
+      const p0 = solPl[touchedList[0]], p1 = solPl[touchedList[1]], p2 = solPl[touchedList[2]];
+      if(p0 < 0 || p1 < 0 || p2 < 0) continue;
+      const baseE = ewCurrentScalar();
+      ewApplyRemove(touchedList[0]);
+      ewApplyRemove(touchedList[1]);
+      ewApplyRemove(touchedList[2]);
+      const remE = ewCurrentScalar(); // 三件移除后的能量；候选总能量 = remE + 三件边际之和
+      // 贪心重填：三件全排列 × 全位枚举（len≤42，最坏 6×42³≈44万/试，收尾路径
+      // 非热循环，实测总耗时可接受；旧 cap16 抽样会漏 bonus 位形）；
+      // 记录组合归属（gI* 为物品），回填时精确复现该组合。
+      let gBestE = Infinity, gI0 = -1, gI1 = -1, gI2 = -1, gA = -1, gB = -1, gC = -1;
+      for(let o0 = 0; o0 < 3; o0++){
+        const i0 = touchedList[o0];
+        const off0 = m.itemPlOff[i0], len0 = m.itemPlLen[i0];
+        for(let k0 = 0; k0 < len0; k0++){
+          const q0 = off0 + k0;
+          if(!ewMaskFits(q0)) continue;
+          const e0 = ewDeltaE(ewDeltaFor(q0, +1));
+          ewApplyAdd(i0, q0);
+          for(let o1 = 0; o1 < 3; o1++){
+            if(o1 === o0) continue;
+            const i1 = touchedList[o1];
+            const off1 = m.itemPlOff[i1], len1 = m.itemPlLen[i1];
+            for(let k1 = 0; k1 < len1; k1++){
+              const q1 = off1 + k1;
+              if(!ewMaskFits(q1)) continue;
+              const e01 = e0 + ewDeltaE(ewDeltaFor(q1, +1));
+              ewApplyAdd(i1, q1);
+              for(let o2 = 0; o2 < 3; o2++){
+                if(o2 === o0 || o2 === o1) continue;
+                const i2 = touchedList[o2];
+                const off2 = m.itemPlOff[i2], len2 = m.itemPlLen[i2];
+                for(let k2 = 0; k2 < len2; k2++){
+                  const q2 = off2 + k2;
+                  if(!ewMaskFits(q2)) continue;
+                  const e = remE + e01 + ewDeltaE(ewDeltaFor(q2, +1));
+                  if(e < gBestE){ gBestE = e; gI0 = i0; gI1 = i1; gI2 = i2; gA = q0; gB = q1; gC = q2; }
+                }
+              }
+              ewApplyRemove(i1);
+            }
+          }
+          ewApplyRemove(i0);
+        }
+      }
+      // 回填：找到更优组合则按枚举顺序精确装入，否则恢复原位
+      // （gBestE 为含三件边际之和的总能量，与 baseE 同口径可比）
+      if(gA >= 0 && gBestE < baseE - 1e-9){
+        ewApplyAdd(gI0, gA);
+        ewApplyAdd(gI1, gB);
+        ewApplyAdd(gI2, gC);
+      }else{
+        ewApplyAdd(touchedList[0], p0);
+        ewApplyAdd(touchedList[1], p1);
+        ewApplyAdd(touchedList[2], p2);
+      }
+    }
+  }
   ewUndoSuspend = false; ewUndoTop = 0;
   if(ewBetterThanBest()) ewCopyToBest();
+}
+// 收尾多端点精化（P2 尾部收敛）：deterministic refine 是局部最优，其结果只依赖起点；
+// SA 终点若困在次优盆地，单端点精化无法跨越。此处从 best 与若干随机重启贪心解
+// 分别跑 ewRefineSolution，取最优晋级（随机重启只在此处消耗 RNG，种子复现性不受影响）。
+function ewFinishPolish(){
+  const m = ewModel;
+  if(!ewScratchSol) ewScratchSol = new Int32Array(m.I);
+  // 端点 0：当前 best → 深度精化（含阶段三，改进则晋级）
+  ewLoadSolution(new Int32Array(bestSol));
+  ewRefineSolution(true);
+  // 端点 1..23：前两轮随机重启贪心（密度序随机抖动 → 多样起点）；其余基于 best
+  // 的逃逸扰动重建（在 best 盆地邻域换件组合，针对 bonus 尾部差距）+ 精化；
+  // trial≥8 叠加大扰动接近全盘重建。polish 在 3s 搜索预算之外，端点数不受限。
+  // 注意：ewInitialSolution 末尾会无条件 ewCopyToBest，故每轮先快照 best，
+  // 精化后若仍不优于快照则回滚跟踪量（只有真正更优的端点才更新 best）。
+  for(let trial = 0; trial < 24; trial++){
+    ewScratchSol.set(bestSol);
+    const sE = bestEnergy, sC = bestComplete, sB = bestBase, sBo = bestBonus;
+    const sMw = bestManW, sDw = bestDefW, sAdj = bestAdj, sIt = bestItems, sAr = bestArea;
+    if(trial < 2){
+      ewInitialSolution();
+    }else{
+      ewLoadSolution(new Int32Array(ewScratchSol));
+      ewOpEscapeRebuild(trial >= 8 ? 1 : 0);
+      if(trial >= 8) ewOpEscapeRebuild(1); // trial8+ 叠加大扰动接近全盘重建
+    }
+    ewRefineSolution(true);
+    const better = ewCurrentScalar() < sE - 1e-9 || (
+      Math.abs(ewCurrentScalar() - sE) <= 1e-9 &&
+      ewBetterLex(ewCompleteFlag(), curBase + curBonus, curManW, curDefW, curAdj, curItems, curArea,
+        sC, sB + sBo, sMw, sDw, sAdj, sIt, sAr));
+    if(!better){
+      bestSol.set(ewScratchSol);
+      bestEnergy = sE; bestComplete = sC; bestBase = sB; bestBonus = sBo;
+      bestManW = sMw; bestDefW = sDw; bestAdj = sAdj; bestItems = sIt; bestArea = sAr;
+    }
+  }
+  // 把当前状态恢复到 best（后续上报 parts 与 sol 一致）
+  ewLoadSolution(new Int32Array(bestSol));
 }
 
 // ------------------------- 主搜索循环（P4：时间片分片，片间让出事件循环消化消息） -------------------------
 function ewRunChunk(){
-  const REHEAT_ITERS = 4096, MAX_REHEAT = 8, SEGMENT = 256;
+  const REHEAT_ITERS = 2048, MAX_REHEAT = 24, SEGMENT = 256;
   const swapEnabled = !!ewMeta.swapEnabled;
   const sliceStart = performance.now();
   while(iters < ewNodeLimit){
@@ -696,6 +911,16 @@ function ewRunChunk(){
     }
     // 段式权重更新（轮盘赌前缀和在 ewPickOp 内现算）
     if(iters > 0 && iters % SEGMENT === 0) ewSegmentUpdate();
+    // 中期强制逃逸（B 档件组合困局）：重热已达 8 次仍停滞（纯迭代状态触发，
+    // 不依赖时钟，种子复现性不变）→ 从 best 逃逸重建一次并回温
+    if(!ewMidRestart && reheatCount >= 8){
+      ewMidRestart = 1;
+      ewLoadSolution(new Int32Array(bestSol));
+      ewOpEscapeRebuild();
+      curT = Math.max(Tmin, T0);
+      ewRebuildExpTable();
+      lastImproveIter = iters; ewLastReheatIter = iters;
+    }
     const before = ewCurrentScalar();
     const checkpoint = ewUndoTop; // 算子执行前 undo 栈位：拒绝时反向弹出回滚
     const op = ewPickOp();
@@ -722,9 +947,30 @@ function ewRunChunk(){
     iters++;
     // 冷却
     curT = Math.max(Tmin, curT * 0.99995);
-    // 重热：连续 REHEAT_ITERS 无改进且重热次数未满
+    // 重热：连续 REHEAT_ITERS 无改进且重热次数未满。best 已 complete 时 50% 全新贪心
+    // 重启（跨盆地探索，A 档远盆地差距的出路）；非 complete 时仅回温续跑（B 档件组合
+    // 仍在换血，重启会打断增件进程；快照保护 best；RNG 确定性消耗）
     if(iters - lastImproveIter >= REHEAT_ITERS && iters - ewLastReheatIter >= REHEAT_ITERS && reheatCount < MAX_REHEAT){
-      curT = Math.max(Tmin, T0 * 0.5);
+      if(bestComplete && ewRand() < 0.5){
+        if(!ewScratchSol) ewScratchSol = new Int32Array(ewModel.I);
+        ewScratchSol.set(bestSol);
+        const sE = bestEnergy, sC = bestComplete, sB = bestBase, sBo = bestBonus;
+        const sMw = bestManW, sDw = bestDefW, sAdj = bestAdj, sIt = bestItems, sAr = bestArea;
+        ewInitialSolution();
+        const better = ewCurrentScalar() < sE - 1e-9 || (
+          Math.abs(ewCurrentScalar() - sE) <= 1e-9 &&
+          ewBetterLex(ewCompleteFlag(), curBase + curBonus, curManW, curDefW, curAdj, curItems, curArea,
+            sC, sB + sBo, sMw, sDw, sAdj, sIt, sAr));
+        if(!better){
+          bestSol.set(ewScratchSol);
+          bestEnergy = sE; bestComplete = sC; bestBase = sB; bestBonus = sBo;
+          bestManW = sMw; bestDefW = sDw; bestAdj = sAdj; bestItems = sIt; bestArea = sAr;
+        }
+        // 从新贪心解继续退火（不回载 best：重启的意义就是探索新盆地）
+      }else{
+        ewLoadSolution(new Int32Array(bestSol));
+      }
+      curT = Math.max(Tmin, T0);
       ewRebuildExpTable();
       reheatCount++;
       ewLastReheatIter = iters;
@@ -748,7 +994,7 @@ function ewRunChunk(){
 // 收尾：若末次 best 改进未经 incumbent-lite 上报，补发一次（主线程全算重建）
 function ewFinishSearch(){
   ewDrainMessages(); // 收尾前再消化一次（stop 可能改变 stopped 语义）
-  ewRefineSolution(); // 确定性局部精化：收紧 SA 与 DFS 的尾部差距
+  ewFinishPolish(); // 多端点确定性精化：best + 随机重启贪心，收紧 SA 与 DFS 尾部差距
   const endNow = performance.now();
   if(endNow - lastIncumbent >= 250){
     self.postMessage({type:'incumbent-lite', stage:'SA 退火', sol: new Int32Array(bestSol), parts: ewPartsOfBest()});
@@ -778,7 +1024,7 @@ function engineWorkerMain(){
       bfsVisited = new Uint8Array(m.W * m.H);
       bfsQueue = new Int32Array(m.W * m.H);
       regionStamp = new Int16Array(m.I);
-      touchedList = new Int16Array(4);
+      touchedList = new Int16Array(m.I); // escape 重建候选池最长 I 件
       // undo 栈容量 3I+8：shuffleRegion 最坏 = I 移除 + I 未放件插入 + 3 重填；越界写 TypedArray
       // 静默丢弃但 top 照涨 → 回滚读 undefined → 状态损坏（期 1 验收 T4 漂移根因）
       const undoCap = Math.max(16, 3 * m.I + 8);
@@ -799,6 +1045,7 @@ function engineWorkerMain(){
       ewLastReheatIter = 0;
       lastProgress = started; lastIncumbent = started - 250; lastSwapReq = started - 50;
       iters = 0; acceptCount = 0; totalMoves = 0; reheatCount = 0; lastImproveIter = 0;
+      ewMidRestart = 0;
       stoppedFlag = false;
       // 初始贪心解先精化一轮（确定性），再上报基线 incumbent-lite
       ewRefineSolution();
@@ -847,7 +1094,10 @@ function engWorkerStateDecls(){
     + 'var ewMsgQueue=[];'
     + 'var ewUndoIt=null,ewUndoPl=null,ewUndoTop=0,ewUndoSuspend=false;'
     + 'var ewNbrOff=null,ewNbrCell=null,ewPairBonus=null,ewPairManW=null,ewPairDefW=null;'
-    + 'var ewNodeLimit=0,ewLastReheatIter=0;\n';
+    + 'var ewRefineTopBuf=null;'
+    + 'var ewScratchSol=null;'
+    + 'var ewNodeLimit=0,ewLastReheatIter=0;\n'
+    + 'var ewMidRestart=0;\n';
 }
 function engWorkerPartFunctions(){
   return [
@@ -866,11 +1116,11 @@ function engWorkerPartFunctions(){
     ewPartsOfBest, ewCopyToBest, ewBetterThanBest, ewMaybePromote,
     ewRebuildExpTable, ewAcceptTest,
     ewOpRelocate, ewOpMoveGreedy, ewOpSwapPair, ewOpRemoveInsert,
-    ewOpShuffleRegion, ewOpInsertMissing,
+    ewOpShuffleRegion, ewOpInsertMissing, ewOpEscapeRebuild,
     ewInitOps, ewPickOp, ewRunOp, ewSegmentUpdate,
     ewInitialSolution, ewLoadSolution,
     ewSendProgress, ewSendDone, ewDrainMessages, ewRejectRestore,
-    ewCalibrateT0, ewRefineSolution, ewRunChunk, ewFinishSearch
+    ewCalibrateT0, ewRefineSolution, ewFinishPolish, ewRunChunk, ewFinishSearch
   ];
 }
 
