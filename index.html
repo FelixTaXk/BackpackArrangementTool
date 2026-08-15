@@ -3,18 +3,21 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>背包排列优化工具</title>
+<title>乾坤袋·推演台（背包排列优化工具）</title>
 <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
 <header>
-  <h1>背包排列优化工具</h1>
-  <p>严格按“完整装入 → 实际总属性 → 手动邻接优先级 → 默认邻接优先级 → 总邻接数量”优化；实际总属性 = 全部法宝各项基础属性之和 + 全部百分比加成之和。</p>
+  <div class="plaque">
+    <h1>乾坤袋·推演台</h1>
+    <span class="header-seal" aria-hidden="true">法<br>宝</span>
+  </div>
+  <p>背包排列优化工具：严格按“完整装入 → 实际总属性 → 手动邻接优先级 → 默认邻接优先级 → 总邻接数量”优化；实际总属性 = 全部法宝各项基础属性之和 + 全部百分比加成之和。</p>
 </header>
 <main>
   <section>
     <div class="card space-card">
-      <h2>1. 当前背包空间</h2>
+      <h2><span class="flavor">乾坤界域</span><span class="fn">1. 当前背包空间</span></h2>
       <div class="space-body">
         <div class="space-controls">
           <div class="row">
@@ -31,9 +34,10 @@
     </div>
 
     <div class="card library-card">
-      <h2>2. 法宝库</h2>
-      <div class="row">
-        <label>属性筛选 <select id="libraryFilterAttribute"><option value="">全部</option></select></label>
+      <h2><span class="flavor">百宝阁</span><span class="fn">2. 法宝库</span></h2>
+      <div class="row filter-row">
+        <label class="filter-label">属性筛选</label>
+        <div id="libraryFilterAttribute" class="attr-compass" role="group" aria-label="属性筛选"></div>
         <button id="resetItemsBtn">重新加载法宝数据库</button>
       </div>
       <div class="hint">法宝的名称、形状、基础属性与加成全部来自内置数据库（用户 Excel 转换产物），不可手动修改。先选择属性筛选，同种法宝合并为一行；在表格品质列选择品质后点击“添加”，即可将对应品质的法宝加入清单参与求解。</div>
@@ -47,7 +51,7 @@
     </div>
 
     <div class="card inventory-card">
-      <h2>3. 已有法宝清单</h2>
+      <h2><span class="flavor">随身法宝</span><span class="fn">3. 已有法宝清单</span></h2>
       <div class="row">
         <button id="renumberBtn">重新编号</button>
         <button id="clearInventoryBtn" class="danger">清空清单</button>
@@ -70,7 +74,7 @@
 
   <section>
     <div class="card result-card">
-      <h2>4. 自动搜索与当前最佳摆放结果</h2>
+      <h2><span class="flavor">天命笺</span><span class="fn">4. 自动搜索与当前最佳摆放结果</span></h2>
       <div class="output-wrap">
         <div class="result-main">
           <div class="result-grid-block">
@@ -78,7 +82,7 @@
             <div id="legend" class="legend"></div>
           </div>
           <div class="embedded-solver">
-            <h3>求解设置</h3>
+            <h3 class="panel-sub"><span class="flavor">推演设置</span><span class="fn">求解设置</span></h3>
             <div class="row">
               <label>搜索档位
                 <select id="searchMode">
@@ -97,23 +101,23 @@
               <label>最长搜索时间(ms) <input id="timeLimit" type="number" min="100" step="100" value="20000"></label>
             </div>
             <div class="row">
-              <label><input id="useAdjacencyBonus" type="checkbox" checked> 启用百分比相邻加成</label>
+              <label><input id="useAdjacencyBonus" type="checkbox" checked> 启用共鸣（百分比相邻加成）</label>
               <label><input id="parallelSearch" type="checkbox"> 并行搜索</label>
               <label id="workerCountLabel" hidden>Worker 数量 <input id="workerCount" type="number" min="2" max="12" step="1" value="2"><span id="workerCountHint" class="hint"></span></label>
             </div>
             <div class="row">
-              <button id="solveBtn" class="primary">搜索更优摆放解</button>
-              <button id="cancelSolveBtn" class="danger" disabled>停止计算</button>
-              <button id="exportBtn">导出结果 JSON</button>
-              <button id="saveBtn">保存当前配置</button>
-              <button id="loadBtn">读取配置</button>
+              <button id="solveBtn" class="primary"><span class="btn-flavor">推演</span><span class="btn-sub">搜索更优摆放解</span></button>
+              <button id="cancelSolveBtn" class="danger" disabled>停止推演</button>
+              <button id="exportBtn">导出天命笺 JSON</button>
+              <button id="saveBtn">刻录·保存当前配置</button>
+              <button id="loadBtn">唤回·读取配置</button>
             </div>
             <div class="hint">快速档优先在 3 秒内给出可用结果；深度档使用自定义上限继续优化。求解引擎默认为混合 Portfolio（auto 档：经典精确搜索 DFS + 元启发式 SA 并行组合，取各成员最佳结果），也可切换经典精确搜索或元启发式 SA；快速档固定使用经典精确搜索，评分与比较口径完全一致。并行搜索会用多个不同随机起点同时计算并合并最佳结果，速度更快但会增加 CPU 与耗电，默认关闭。达到时间或节点上限不代表已证明全局最优。</div>
           </div>
         </div>
         <div class="result-summary">
           <div class="stats">
-            <div class="stat">实际总属性<b id="statScore">-</b></div>
+            <div class="stat score-banner"><span class="score-label">实际总属性<small>战力横幅 · 基础属性 + 百分比加成</small></span><b id="statScore">-</b></div>
             <div class="stat">重点法宝邻接<b id="statPriority">-</b></div>
             <div class="stat">总邻接数量<b id="statAdjacency">-</b></div>
             <div class="stat">已用格子<b id="statArea">-</b></div>
@@ -122,14 +126,14 @@
           </div>
           <h3>分项统计</h3>
           <div id="statBreakdown" class="stat-breakdown-wrap"><div class="hint">尚未计算。</div></div>
-          <h3>状态</h3>
+          <h3>纸卷·状态</h3>
           <pre id="statusBox">尚未计算。</pre>
         </div>
       </div>
     </div>
 
     <div class="card help-card">
-      <h2>5. 使用说明</h2>
+      <h2><span class="flavor">修行指南</span><span class="fn">5. 使用说明</span></h2>
       <ol>
         <li>先设置背包宽度、高度，并点击空间格子标记已解锁区域。</li>
         <li>法宝的名称、形状、属性（金木水火土雷体 7 种）、品质（绿蓝紫金红 5 种）、基础属性与加成全部来自内置数据库，不可手动修改；先选择属性筛选，表格中同种法宝的不同品质变体合并为一行，在每行“品质”列下拉选择品质后点击“添加”，加入对应品质的法宝。</li>
@@ -157,6 +161,7 @@
 <script src="js/engine-worker.js"></script>
 <script src="js/engine-orchestrator.js"></script>
 <script src="js/solver.js"></script>
+<script src="js/ui-theme.js"></script>
 <script src="js/persistence.js"></script>
 <script src="js/app.js"></script>
 </body>

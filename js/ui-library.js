@@ -32,22 +32,39 @@ function updateTableColumnLayout(){
   });
 }
 
+// 属性圆徽色（仿灵枢宝鉴底部罗盘条；config.js 冻结不改，此处另设主题色）。
+const ATTR_MEDALLION_COLORS = {金:'#d8a531',木:'#6fa76f',水:'#5f9ec7',火:'#c9573f',土:'#a8845c',雷:'#9a7bc0',体:'#8d8d8d'};
+
 function libraryFilterAttribute(){
-  const sel = document.getElementById('libraryFilterAttribute');
-  return sel ? sel.value : '';
+  const wrap = document.getElementById('libraryFilterAttribute');
+  if(!wrap) return '';
+  const btn = wrap.querySelector('button.attr-medallion.active');
+  return btn ? (btn.dataset.attrFilter || '') : '';
+}
+
+function setLibraryFilter(value){
+  const wrap = document.getElementById('libraryFilterAttribute');
+  if(!wrap) return;
+  wrap.querySelectorAll('button.attr-medallion').forEach(b=>b.classList.toggle('active', (b.dataset.attrFilter || '') === value));
 }
 
 function initLibraryFilter(){
-  const sel = document.getElementById('libraryFilterAttribute');
-  if(!sel || sel.options.length > 1) return;
-  for(const a of ATTRIBUTE_OPTIONS){
-    const opt = document.createElement('option');
-    opt.value = a.id;
-    opt.textContent = a.name;
-    sel.appendChild(opt);
-  }
+  const wrap = document.getElementById('libraryFilterAttribute');
+  if(!wrap || wrap.dataset.built) return;
+  wrap.dataset.built = '1';
+  const makeBtn = (value,label,color)=>{
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'attr-medallion';
+    b.dataset.attrFilter = value;
+    b.title = value ? `只看${label}属性法宝` : '显示全部属性法宝';
+    b.innerHTML = (color ? `<span class="attr-dot" style="background:${color}"></span>` : '') + `<span class="attr-name">${label}</span>`;
+    wrap.appendChild(b);
+  };
+  makeBtn('', '全部', null);
+  for(const a of ATTRIBUTE_OPTIONS) makeBtn(a.id, a.name, ATTR_MEDALLION_COLORS[a.id] || a.displayColor);
   // 默认只展示金属性法宝，避免页面一次性全量展示；用户可切回“全部”或其他属性。
-  sel.value = '金';
+  setLibraryFilter('金');
 }
 
 // 基础属性固定三行展示：按注册表顺序（攻击力/防御/生命值）每项一行，缺失或 0 的项目显示 0，纯文本无装饰（同一单元格内多个 <div> 纵向排列，内部已转义）。

@@ -33,7 +33,13 @@ function bindEvents(){
     itemDefs = buildItemDefs();
     renderItemsTable();
   });
-  document.getElementById('libraryFilterAttribute').addEventListener('change', renderItemsTable);
+  // 属性筛选罗盘条（期4）：圆徽按钮组替换原下拉，事件委托到容器；筛选语义不变（属性值集合一致）。
+  document.getElementById('libraryFilterAttribute').addEventListener('click', e=>{
+    const btn = e.target.closest('button.attr-medallion');
+    if(!btn) return;
+    setLibraryFilter(btn.dataset.attrFilter || '');
+    renderItemsTable();
+  });
   document.getElementById('renumberBtn').addEventListener('click', renumberInventory);
   document.getElementById('clearInventoryBtn').addEventListener('click', ()=>{
     if(confirm('确定清空已有法宝清单？')){
