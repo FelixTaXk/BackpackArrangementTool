@@ -134,7 +134,7 @@ function renderItemsTable(){
     tr.innerHTML = `
       <td class="col-name" data-label="名称"><div class="name-line"><span class="shape-name">${escapeHtml(it.name)}</span><span class="hint">${area} 格</span></div></td>
       <td class="col-attribute" data-label="属性"><span class="attr-tag" style="border-color:${attr.displayColor};color:${attr.displayColor}">${escapeHtml(attr.name)}</span></td>
-      <td class="col-quality" data-label="品质"><span class="quality-chip" data-quality="${defQualityId}">${escapeHtml(it.quality)}</span><select data-quality-select data-q="${defQualityId}">${qualityOpts}</select></td>
+      <td class="col-quality" data-label="品质"><select data-quality-select data-q="${defQualityId}">${qualityOpts}</select></td>
       <td class="col-shape" data-label="形状预览"></td>
       <td class="col-base" data-label="基础属性"></td>
       <td class="col-bonus" data-label="加成"></td>
@@ -152,11 +152,9 @@ function renderItemsTable(){
       const v = variants.find(x=>x.idx === Number(e.target.value));
       if(!v) return;
       fillVariantCells(v);
-      // 同步品质色联动：下拉闭合态底色（data-q）与品质色块徽标跟随当前品质
+      // 同步品质色联动：下拉闭合态底色（data-q）跟随当前品质
       const qid = QUALITY_NAME_TO_ID[v.it.quality] || '';
       e.target.dataset.q = qid;
-      const chip = tr.querySelector('.quality-chip');
-      if(chip){ chip.dataset.quality = qid; chip.textContent = v.it.quality; }
     });
     // 添加时取该行品质下拉当前所选项在 itemDefs 中的下标。
     tr.querySelector('button[data-add]').addEventListener('click', ()=>{
