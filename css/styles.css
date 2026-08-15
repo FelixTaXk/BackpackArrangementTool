@@ -189,21 +189,36 @@ button.compact{padding:5px 12px;font-size:12px}
 .mini{display:grid;gap:0;border:1px solid var(--ink);background:var(--ink);width:max-content;transform-origin:left top;border-radius:2px}
 .mini .mcell{width:14px;height:14px;background:var(--cream);border:1px solid var(--ink)}
 .mini .mcell.fill{background:var(--ink)}
-/* 品质行内下拉：木纹小 select；左侧色点取当前品质色（--qdot 由 data-quality 决定） */
+/* 品质行内下拉：颜色直接并入选项与闭合态展示（data-q 决定当前品质色；无独立色点） */
 select[data-quality-select]{
-  appearance:none;-webkit-appearance:none;max-width:76px;padding:4px 18px 4px 20px;font-size:12.5px;cursor:pointer;
-  border:1.5px solid var(--ink);border-radius:6px;color:var(--cream);
+  appearance:none;-webkit-appearance:none;max-width:76px;padding:4px 18px 4px 9px;font-size:12.5px;cursor:pointer;
+  border:1.5px solid var(--ink);border-radius:6px;color:#2b2622;
   background:
-    radial-gradient(circle at 10px 50%, var(--qdot,transparent) 0 3.5px, transparent 4.5px) no-repeat,
-    linear-gradient(45deg,transparent 44%,var(--cream) 45% 55%,transparent 56%) right 7px center/8px 8px no-repeat,
-    repeating-linear-gradient(91deg, rgba(255,255,255,.09) 0 1.5px, transparent 1.5px 5px),
-    linear-gradient(180deg,#a06a3f,var(--wood) 60%,var(--wood-deep));
+    linear-gradient(45deg,transparent 44%,var(--ink) 45% 55%,transparent 56%) right 7px center/8px 8px no-repeat,
+    var(--cream);
 }
-select[data-quality-select][data-quality="green"]{--qdot:var(--quality-green)}
-select[data-quality-select][data-quality="blue"]{--qdot:var(--quality-blue)}
-select[data-quality-select][data-quality="purple"]{--qdot:var(--quality-purple)}
-select[data-quality-select][data-quality="gold"]{--qdot:var(--quality-gold)}
-select[data-quality-select][data-quality="red"]{--qdot:var(--quality-red)}
+select[data-quality-select][data-q="green"]{background:
+    linear-gradient(45deg,transparent 44%,var(--cream) 45% 55%,transparent 56%) right 7px center/8px 8px no-repeat,
+    var(--quality-green)}
+select[data-quality-select][data-q="blue"]{background:
+    linear-gradient(45deg,transparent 44%,var(--cream) 45% 55%,transparent 56%) right 7px center/8px 8px no-repeat,
+    var(--quality-blue)}
+select[data-quality-select][data-q="purple"]{background:
+    linear-gradient(45deg,transparent 44%,var(--cream) 45% 55%,transparent 56%) right 7px center/8px 8px no-repeat,
+    var(--quality-purple)}
+select[data-quality-select][data-q="gold"]{background:
+    linear-gradient(45deg,transparent 44%,var(--cream) 45% 55%,transparent 56%) right 7px center/8px 8px no-repeat,
+    var(--quality-gold)}
+select[data-quality-select][data-q="red"]{background:
+    linear-gradient(45deg,transparent 44%,var(--cream) 45% 55%,transparent 56%) right 7px center/8px 8px no-repeat,
+    var(--quality-red)}
+/* 下拉选项：颜色直接展示在选项上（无 data-q 的选项如“全部”为中性奶油底） */
+select[data-quality-select] option{background:var(--cream);color:#2b2622}
+select[data-quality-select] option[data-q="green"]{background:var(--quality-green);color:#2b2622}
+select[data-quality-select] option[data-q="blue"]{background:var(--quality-blue);color:#2b2622}
+select[data-quality-select] option[data-q="purple"]{background:var(--quality-purple);color:#2b2622}
+select[data-quality-select] option[data-q="gold"]{background:var(--quality-gold);color:#2b2622}
+select[data-quality-select] option[data-q="red"]{background:var(--quality-red);color:#2b2622}
 /* 品质色块徽标：圆角方格 + 2px 墨描边，墨字（五个品质色均为浅中明度，墨字满足 AA 对比度） */
 .quality-chip{
   display:inline-flex;align-items:center;justify-content:center;min-width:2.2em;padding:2px 8px;

@@ -128,13 +128,13 @@ function renderItemsTable(){
     const it = defVariant.it;
     const area = it.cells.length;
     const attr = ATTRIBUTE_MAP[it.attribute] || {name:it.attribute, displayColor:'#6b7280'};
-    const qualityOpts = variants.map(v=>`<option value="${v.idx}"${v === defVariant ? ' selected' : ''}>${escapeHtml(v.it.quality)}</option>`).join('');
+    const qualityOpts = variants.map(v=>`<option value="${v.idx}" data-q="${QUALITY_NAME_TO_ID[v.it.quality] || ''}"${v === defVariant ? ' selected' : ''}>${escapeHtml(v.it.quality)}</option>`).join('');
     const defQualityId = QUALITY_NAME_TO_ID[it.quality] || '';
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="col-name" data-label="名称"><div class="name-line"><span class="shape-name">${escapeHtml(it.name)}</span><span class="hint">${area} 格</span></div></td>
       <td class="col-attribute" data-label="属性"><span class="attr-tag" style="border-color:${attr.displayColor};color:${attr.displayColor}">${escapeHtml(attr.name)}</span></td>
-      <td class="col-quality" data-label="品质"><span class="quality-chip" data-quality="${defQualityId}">${escapeHtml(it.quality)}</span><select data-quality-select data-quality="${defQualityId}">${qualityOpts}</select></td>
+      <td class="col-quality" data-label="品质"><span class="quality-chip" data-quality="${defQualityId}">${escapeHtml(it.quality)}</span><select data-quality-select data-q="${defQualityId}">${qualityOpts}</select></td>
       <td class="col-shape" data-label="形状预览"></td>
       <td class="col-base" data-label="基础属性"></td>
       <td class="col-bonus" data-label="加成"></td>
@@ -152,9 +152,9 @@ function renderItemsTable(){
       const v = variants.find(x=>x.idx === Number(e.target.value));
       if(!v) return;
       fillVariantCells(v);
-      // 同步品质色联动：下拉左侧色点与品质色块徽标跟随当前品质
+      // 同步品质色联动：下拉闭合态底色（data-q）与品质色块徽标跟随当前品质
       const qid = QUALITY_NAME_TO_ID[v.it.quality] || '';
-      e.target.dataset.quality = qid;
+      e.target.dataset.q = qid;
       const chip = tr.querySelector('.quality-chip');
       if(chip){ chip.dataset.quality = qid; chip.textContent = v.it.quality; }
     });
