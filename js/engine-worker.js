@@ -657,7 +657,8 @@ function ewLnsDestroyRegion(k){
 //   （旧用 ewLnsPool[cap..n) 前缀为件号升序，与 ewLnsOrder 面积序置换不一致时剩余集错位）；
 //   ewLnsPool[0..n-cap) 复用为暂存区，不动 ewLnsOrder（DFS 分支序）。
 //   可用面积 = cellCount - curArea - 碎洞（BFS 空格连通域 < 池最小件面积者剔除）
-// 浮点累积防御：剪枝侧比较时另加 1e-6 容差（见 ewLnsSearch），本函数不再放宽。
+// 浮点累积防御：剪枝口径与晋级门槛同口径——ewLnsSearch 取 target = bTotal + 1e-9
+// （只保留可能产生严格改进 UB > bTotal + 1e-9 的分支），本函数不再放宽。
 function ewLnsUB(cap){
   const m = ewModel, W = m.W, H = m.H, n = ewLnsPoolN;
   const useB = ewMeta.useBonus;
@@ -684,6 +685,8 @@ function ewLnsUB(cap){
   }
   let ub = curBase + (useB ? curBonus : 0);
   // 剩余集 = 根序后缀（与已放集精确一致），写入 ewLnsPool 前段暂存
+  // 护栏：本函数破坏 ewLnsPool 内容（根序后缀写入 + 就地选择排序），DFS 期间不得再读池
+  // （池仅在 ewLnsSearch 入口重建一次，此后分支序以 ewLnsOrder 为准）
   let r = 0;
   for(let s = cap; s < n; s++) ewLnsPool[r++] = ewLnsOrder[s];
   if(r === 0 || avail <= 0) return ub;
@@ -743,7 +746,7 @@ function ewLnsSearch(bE, bTotal, bItems, hardMs, nodeCap){
   ewUndoSuspend = true;
   let sp = 1, nodes = 0, any = false;
   let bestE = bE, bestItems = bItems;
-  const target = bTotal + 1e-6; // 剪枝容差与 ewLnsUB 注释口径一致（浮点累积防御）
+  const target = bTotal + 1e-9; // 剪枝门槛与晋级门槛（eNow < bestE - 1e-9）同口径：只保留可能严格改进的分支（UB > target）
   let completeFound = false;
   for(;;){ // 迭代器驱动：弹未完成节点继续，否则回溯
     let node = -1;
@@ -789,6 +792,10 @@ function ewLnsSearch(bE, bTotal, bItems, hardMs, nodeCap){
     }
     if(ewLnsStackPtr[depth] >= ewLnsStackCnt[depth]) continue; // 无候选：下轮弹出回溯
     const it = ewLnsStackIt[depth];
+    // 消费下一候选前统一保证本节点件未放：根节点无弹栈撤件路径（sp=1 时 while(sp>0)
+    // 直接退出），非根节点重入时旧位仍在——不撤则 ewApplyAdd 防御静默 no-op，第 2..cnt
+    // 个候选摆放永不生效。弹栈路径撤的已是未放件时 ewApplyRemove 防御 no-op，两侧兼容。
+    if(solPl[it] >= 0) ewApplyRemove(it);
     const q = ewLnsCandP[depth * CAP + ewLnsStackPtr[depth]++];
     ewApplyAdd(it, q);
     any = true;
@@ -868,7 +875,9 @@ function ewInitOps(){
   // 注：LNS 关闭时权重不清零——档 A 基线即「权重照旧 + ewRunOp 短路」，清零会改变
   // ewPickOp 的 RNG→算子映射（no-op 份额转投逃逸重建），破坏与基线逐字一致；
   // 短路先于一切权重生效，地板 0.3 无法复活 LNS 执行。
-  ewInitLns();
+  // init 门控：关闭档全程不触碰 LNS 数组（ewRunOp 短路已保证无执行路径），
+  // 免 degUb 预计算、O(I²) maxPair 与 typed-array 分配的空转开销
+  if(ewLnsEnabled) ewInitLns();
 }
 function ewPickOp(){
   let s = 0;
