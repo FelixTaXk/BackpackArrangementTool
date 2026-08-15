@@ -45,7 +45,11 @@ function libraryFilterAttribute(){
 function setLibraryFilter(value){
   const wrap = document.getElementById('libraryFilterAttribute');
   if(!wrap) return;
-  wrap.querySelectorAll('button.attr-medallion').forEach(b=>b.classList.toggle('active', (b.dataset.attrFilter || '') === value));
+  wrap.querySelectorAll('button.attr-medallion').forEach(b=>{
+    const isActive = (b.dataset.attrFilter || '') === value;
+    b.classList.toggle('active', isActive);
+    b.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
 }
 
 function initLibraryFilter(){
@@ -57,6 +61,7 @@ function initLibraryFilter(){
     b.type = 'button';
     b.className = 'attr-medallion';
     b.dataset.attrFilter = value;
+    b.setAttribute('aria-pressed','false');
     b.title = value ? `只看${label}属性法宝` : '显示全部属性法宝';
     b.innerHTML = (color ? `<span class="attr-dot" style="background:${color}"></span>` : '') + `<span class="attr-name">${label}</span>`;
     wrap.appendChild(b);
@@ -124,11 +129,12 @@ function renderItemsTable(){
     const area = it.cells.length;
     const attr = ATTRIBUTE_MAP[it.attribute] || {name:it.attribute, displayColor:'#6b7280'};
     const qualityOpts = variants.map(v=>`<option value="${v.idx}"${v === defVariant ? ' selected' : ''}>${escapeHtml(v.it.quality)}</option>`).join('');
+    const defQualityId = QUALITY_NAME_TO_ID[it.quality] || '';
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="col-name" data-label="名称"><div class="name-line"><span class="shape-name">${escapeHtml(it.name)}</span><span class="hint">${area} 格</span></div></td>
       <td class="col-attribute" data-label="属性"><span class="attr-tag" style="border-color:${attr.displayColor};color:${attr.displayColor}">${escapeHtml(attr.name)}</span></td>
-      <td class="col-quality" data-label="品质"><select data-quality-select>${qualityOpts}</select></td>
+      <td class="col-quality" data-label="品质"><span class="quality-chip" data-quality="${defQualityId}">${escapeHtml(it.quality)}</span><select data-quality-select data-quality="${defQualityId}">${qualityOpts}</select></td>
       <td class="col-shape" data-label="形状预览"></td>
       <td class="col-base" data-label="基础属性"></td>
       <td class="col-bonus" data-label="加成"></td>
@@ -144,7 +150,13 @@ function renderItemsTable(){
     fillVariantCells(defVariant);
     tr.querySelector('select[data-quality-select]').addEventListener('change', e=>{
       const v = variants.find(x=>x.idx === Number(e.target.value));
-      if(v) fillVariantCells(v);
+      if(!v) return;
+      fillVariantCells(v);
+      // 同步品质色联动：下拉左侧色点与品质色块徽标跟随当前品质
+      const qid = QUALITY_NAME_TO_ID[v.it.quality] || '';
+      e.target.dataset.quality = qid;
+      const chip = tr.querySelector('.quality-chip');
+      if(chip){ chip.dataset.quality = qid; chip.textContent = v.it.quality; }
     });
     // 添加时取该行品质下拉当前所选项在 itemDefs 中的下标。
     tr.querySelector('button[data-add]').addEventListener('click', ()=>{

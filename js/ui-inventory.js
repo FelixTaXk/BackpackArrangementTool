@@ -19,7 +19,7 @@ function renderInventoryTable(){
       <td class="col-no" data-label="编号"><b>#${it.no}</b></td>
       <td class="col-name" data-label="名称"><span class="shape-name">${escapeHtml(it.name)}</span></td>
       <td class="col-attribute" data-label="属性"><span class="attr-tag" style="border-color:${attr.displayColor};color:${attr.displayColor}">${escapeHtml(attr.name)}</span></td>
-      <td class="col-quality" data-label="品质">${escapeHtml(qualityName(it.quality))}</td>
+      <td class="col-quality" data-label="品质"><span class="quality-chip" data-quality="${QUALITY_NAME_TO_ID[it.quality] || ''}">${escapeHtml(qualityName(it.quality))}</span></td>
       <td class="col-shape" data-label="形状"></td>
       <td class="col-base" data-label="基础属性">${baseStatsLinesHtml(it)}</td>
       <td class="col-bonus" data-label="加成模式">${bonusLinesHtml(it)}</td>
