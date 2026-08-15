@@ -10,6 +10,8 @@
 //   2. 回火 broker：engOrchHandleSwapReq——相邻温度对 (i,i+1) 奇偶轮转，
 //      Metropolis 准则 min(1, exp((βk-βk+1)(Ek+1-Ek))) 决定是否交换解。
 //      隐藏开关 window.__ENGINE_TEMPERING_OFF__ = true 时直接回发原 sol 不交换。
+//      期 2 收口：init meta 恒带 lnsEnabled（缺省 false 即 LNS 关闭），
+//      隐藏开关 window.__ENGINE_LNS_ON__ = true 时置 true（同风格）。
 //   3. 契约转换：SA Worker 的 incumbent-lite / done 消息经 encRebuildBest 全算重建，
 //      包装成与旧引擎逐字段一致的消息后交给现有消息循环（incumbent/done 分支零改动）。
 // ============================================================================
@@ -90,7 +92,8 @@ function engOrchCreateWorkers(opts){
         nodeLimit: payload.nodeLimit, timeLimit: payload.timeLimit, useBonus: payload.useBonus,
         requiredTotalItems, requiredTotalArea: payload.requiredTotalArea,
         requiredTotalBase: payload.requiredTotalBase, skippedCount,
-        tempIndex: n, swapEnabled: temperingOn
+        tempIndex: n, swapEnabled: temperingOn,
+        lnsEnabled: !!window.__ENGINE_LNS_ON__ // 期 2 收口：LNS 默认关闭；隐藏开关 __ENGINE_LNS_ON__ 开启（只加法新键，冻结契约不变）
       }
     }, [buf]);
     workers.push(w);
@@ -313,6 +316,12 @@ function engOrchNoteProgress(worker, msg){
   if(!rec) return;
   rec.nodes = Number(msg.nodes) || rec.nodes;
   rec.elapsed = Number(msg.elapsed) || rec.elapsed;
+  // 冻结契约键集对齐（只加法）：legacy progress 消息带 fullPackingFound 键
+  // （solver-worker reportProgress 的 extra），SA 侧 progress 缺该键且直通 UI；
+  // 此处就地补齐 bestComplete（与 SA complete 语义同口径），不删改任何现有键。
+  if(rec.kind === 'sa' && msg && msg.fullPackingFound === undefined){
+    msg.fullPackingFound = !!msg.bestComplete;
+  }
 }
 
 // ----------------------------------------------------------------------------
