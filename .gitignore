@@ -1,1 +1,4 @@
 bag-solver-result.json
+debug.log
+*.tmp
+scripts/exp/

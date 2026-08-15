@@ -301,7 +301,9 @@ ${skipped.length>0?'存在单件无法合法放置的物品，将直接搜索最
     const saSummary = (typeof engOrchSaSummary === 'function') ? engOrchSaSummary() : null;
     if(saSummary){
       const top3 = Array.isArray(saSummary.opTop3) ? saSummary.opTop3.map(o => `${o.name}(${Number(o.w || 0).toFixed(2)})`).join('、') : '-';
-      document.getElementById('statusBox').textContent += `\n\n模拟退火（SA）摘要：${saSummary.workerCount} 个 SA Worker 参与${saSummary.sabMode ? '（SAB 直连回火通道）' : '（主线程 broker 回火）'}
+      // 期 3 评审修复：回火态三态渲染（SAB 直连 / broker / 未启用），不再对单 SA 谎报回火通道
+      const temperingText = saSummary.tempering ? (saSummary.sabMode ? '（SAB 直连回火通道）' : '（主线程 broker 回火）') : '（未启用回火（单 SA））';
+      document.getElementById('statusBox').textContent += `\n\n模拟退火（SA）摘要：${saSummary.workerCount} 个 SA Worker 参与${temperingText}
 末次温度：${Number(saSummary.temp ?? 0).toPrecision(4)}，末次接受率：${((Number(saSummary.acceptRate) || 0) * 100).toFixed(1)}%，迭代速率：${((Number(saSummary.itersPerSec) || 0) / 10000).toFixed(1)} 万/秒，重热次数：${Number(saSummary.restarts) || 0}
 算子权重 Top3：${top3}（lnsSmall/lnsBig 默认关闭，权重非零不代表已执行）`;
     }

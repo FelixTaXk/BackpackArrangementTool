@@ -68,7 +68,8 @@ function engOrchCreateWorkers(opts){
   const saCount = engineMode === 'hybrid' ? K : Math.max(0, K - 1);
   const temperingOn = !window.__ENGINE_TEMPERING_OFF__ && saCount >= 2;
   // SAB 增强档（期 3）：回火开启且 crossOriginIsolated 时建立 SAB 直连通道（固定槽位+
-  // 序列号+Atomics 通知），替代 broker 的 swap-req/swap-accept 消息对；任何失败回落 broker。
+  // 序列号+Atomics 发布屏障，无 wait/notify，主循环每 2048 迭代轮询），替代 broker 的
+  // swap-req/swap-accept 消息对；任何失败回落 broker。
   // K=1（saCount<2）或 file:// 永不启用，单 Worker 行为不变。
   let sab = null, sabMode = false;
   if(temperingOn && engOrchSabAvailable()){
@@ -99,6 +100,7 @@ function engOrchCreateWorkers(opts){
     pairParity: 0,        // 奇偶轮转位
     T0: 0,                // 温度标度：由 Worker 标定的 parts.T0 同步（engOrchConvertIncumbentLite）
     sabMode,              // 期 3：本会话回火通道是否走 SAB 直连（false = broker）
+    temperingOn,          // 期 3 评审修复：实际回火启用态（saCount>=2 且未被隐藏开关禁用），摘要三态用
     saLast: null          // 期 3：最近一次 SA progress 摘要（终态 statusBox 追加用）
   };
   const workers = [];
@@ -373,6 +375,9 @@ function engOrchSaSummary(){
   return {
     workerCount: engOrchState.saWorkers.length,
     sabMode: !!engOrchState.sabMode,
+    // 期 3 评审修复：透传实际回火态（saCount=1 时 temperingOn=false 从未交换，
+    // 展示层据此渲染「未启用回火（单 SA）」而非谎报 broker/SAB）
+    tempering: engOrchState.saWorkers.length >= 2 && !!engOrchState.temperingOn,
     temp: engOrchState.saLast.temp,
     acceptRate: engOrchState.saLast.acceptRate,
     itersPerSec: engOrchState.saLast.itersPerSec,

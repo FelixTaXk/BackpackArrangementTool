@@ -1021,7 +1021,7 @@ function ewSendDone(now){
 }
 
 // ------------------------- SAB 回火直连通道（期 3 增强档） -------------------------
-// 固定槽位 + 序列号 + Atomics 通知的简单直传结构（后续可扩展为环形队列）。
+// 固定槽位 + 序列号 + Atomics 发布屏障（无 wait/notify，主循环每 2048 迭代轮询）的简单直传结构（后续可扩展为环形队列）。
 // 每会话一块 SharedArrayBuffer，槽位布局（N=SA Worker 数，I=物品数，下方区间为字节）：
 //   [0, 16N) Int32 控制区：视图基址 0、长 4N 字（视图下标≡绝对 Int32 下标），每槽 4 字，
 //           seq 在视图下标 [4k]；禁止改写为其他基址视图的下标
@@ -1051,22 +1051,30 @@ function ewSabExchange(){
   if(j < 0 || j >= ewSabN) return;
   const peerSeq = Atomics.load(ewSabCtrl, 4 * j);
   if(peerSeq === 0 || peerSeq <= ewSabLastSeq[j]) return; // 对手无新发布：不耗 RNG 直接返回
-  // 3) 先拷贝对手解再复核 seq：读取期间若对手又发布则放弃本次（避免半更新解）
+  // 3) 拷贝对手解并读取 Ej/T0j 后三检 seq：解/E/T0 必须同属 #peerSeq 同一次发布；
+  // 读取窗口内对手若再发布则放弃本次（防「旧解×新能量」错配与半更新解）
   // 同 solOff 口径：相对解区视图下标 j·I
   const peerOff = j * ewSabI;
   const cand = ewSabSol.slice(peerOff, peerOff + ewSabI);
-  if(Atomics.load(ewSabCtrl, 4 * j) !== peerSeq) return;
-  ewSabLastSeq[j] = peerSeq;
-  // 4) Metropolis 接受判定（与 broker engOrchHandleSwapReq 同式）：β_k = 1/max(Tmin, T0·0.85^k)
-  const Ei = curEnergy;
   const Ej = ewSabF64[2 * j];
-  if(!Number.isFinite(Ej)) return;
+  const T0j = ewSabF64[2 * j + 1];
+  if(Atomics.load(ewSabCtrl, 4 * j) !== peerSeq) return; // 三检：解/E/T0 同属 #peerSeq
+  ewSabLastSeq[j] = peerSeq;
+  if(!Number.isFinite(Ej) || !Number.isFinite(T0j) || T0j <= 0) return;
+  // 4) Metropolis 接受判定（与 broker engOrchHandleSwapReq 同式）：β_k = 1/max(Tmin, T0·0.85^k)
+  // β 按台阶归属取各自标定基温：台阶 k 属 Worker min(i,j)、台阶 k+1 属 max(i,j)；
+  // 各 Worker T0 因种子不同而不同，统一用本地 T0 会使对手台阶 β 量级错配、交换效率失真，
+  // 故本 Worker 台阶用本地 T0、对手台阶用对手发布的 T0j（与 broker 档「用对手上报
+  // parts.T0」语义对齐）。确定性不变：仍仅在对手有新发布时消耗一次 RNG。
+  const Ei = curEnergy;
   const k = Math.min(i, j);
   const Ek = k === i ? Ei : Ej;
   const Ek1 = k === i ? Ej : Ei;
-  const TminS = T0 * 1e-4;
-  const betaK = 1 / Math.max(TminS, T0 * Math.pow(0.85, k));
-  const betaK1 = 1 / Math.max(TminS, T0 * Math.pow(0.85, k + 1));
+  const TminL = T0 * 1e-4, TminJ = T0j * 1e-4;
+  const betaK  = k === i ? 1 / Math.max(TminL, T0  * Math.pow(0.85, k))
+                         : 1 / Math.max(TminJ, T0j * Math.pow(0.85, k));
+  const betaK1 = k === i ? 1 / Math.max(TminJ, T0j * Math.pow(0.85, k + 1))
+                         : 1 / Math.max(TminL, T0  * Math.pow(0.85, k + 1));
   const acceptProb = Math.min(1, Math.exp((betaK - betaK1) * (Ek1 - Ek)));
   if(ewRand() < acceptProb) ewLoadSolution(cand); // 接受：载入对手解（与 swap-accept 同路径）
 }
@@ -1442,7 +1450,8 @@ function engineWorkerMain(){
       ewInitialSolution();
       const tempIndex = Math.max(0, Number(ewMeta.tempIndex) || 0);
       // SAB 回火直连通道（期 3 增强档）：仅当 init 显式带 SharedArrayBuffer（crossOriginIsolated
-      // 环境由 orchestrator 探测后下发）时启用；任何建视图失败静默降级为“不交换”（正确性不受影响）。
+      // 环境由 orchestrator 探测后下发）时启用；任何建视图失败静默降级为 broker 交换
+      // （ewSabActive=false → 主循环回落 swap-req 路径，正确性不受影响）。
       // file:// 环境探测恒 false，不会走到此分支。
       ewSabActive = false;
       try{
