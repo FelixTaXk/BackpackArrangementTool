@@ -1022,17 +1022,25 @@ function ewSendDone(now){
 
 // ------------------------- SAB 回火直连通道（期 3 增强档） -------------------------
 // 固定槽位 + 序列号 + Atomics 通知的简单直传结构（后续可扩展为环形队列）。
-// 每会话一块 SharedArrayBuffer，槽位布局（N=SA Worker 数，I=物品数）：
-//   [0, 16N) Int32 控制区：每槽 4 字，[4k] = 发布序号 seq
-//   [16N, 32N) Float64 数据区：每槽 2 字，[2k] = 能量 E，[2k+1] = 温度标度 T0
-//   [32N, ...) Int32 解区：每槽 I 个摆放下标
+// 每会话一块 SharedArrayBuffer，槽位布局（N=SA Worker 数，I=物品数，下方区间为字节）：
+//   [0, 16N) Int32 控制区：视图基址 0、长 4N 字（视图下标≡绝对 Int32 下标），每槽 4 字，
+//           seq 在视图下标 [4k]；禁止改写为其他基址视图的下标
+//   [16N, 32N) Float64 数据区：视图基址 16N 字节、长 2N 字，每槽 2 字，[2k]=能量 E，
+//           [2k+1]=温度标度 T0；[2k] 为相对视图下标，不得叠加字节基址换算的绝对
+//           F64 下标 2N（=16N/8），否则越过视图末端
+//   [32N, 32N+4NI) Int32 解区：视图基址 32N 字节、长 N·I，每槽 I 个摆放下标。
+//   注意：三个 TypedArray 视图的基址已各自落在所属区段起点，槽内偏移一律相对视图下标
+//   （控制区 4k、数据区 2k、解区 k·I），不得再叠加字节基址换算的基址偏移（解区为
+//   8N=32N/4），否则越过视图末端（N=3、I=11 时解区 8·3+2·11+11=57 > 视图长度 33）
+//   触发 RangeError。
 // 仅 crossOriginIsolated 环境启用（orchestrator 探测）；file:// 恒走 broker。
 // 与 broker 档的交换时序允许不同（跨档不要求逐字一致）；接受判定在 Worker 内完成，
 // 仅在对手有新发布时消耗一次 RNG（broker 档消耗的是主线程 Math.random，不耗 Worker RNG）。
 function ewSabExchange(){
   const i = ewSabSlot;
   // 1) 发布本 Worker 当前解：先写解/能量/T0，再 Atomics.add 递增 seq（兼作发布屏障）
-  const solOff = 8 * ewSabN + i * ewSabI;
+  // ewSabSol 视图基址已是解区起点（长度 N·I），槽偏移相对视图下标 i·I，不可再加 8N 基址
+  const solOff = i * ewSabI;
   ewSabSol.set(solPl, solOff);
   ewSabF64[2 * i] = curEnergy;
   ewSabF64[2 * i + 1] = T0;
@@ -1044,7 +1052,8 @@ function ewSabExchange(){
   const peerSeq = Atomics.load(ewSabCtrl, 4 * j);
   if(peerSeq === 0 || peerSeq <= ewSabLastSeq[j]) return; // 对手无新发布：不耗 RNG 直接返回
   // 3) 先拷贝对手解再复核 seq：读取期间若对手又发布则放弃本次（避免半更新解）
-  const peerOff = 8 * ewSabN + j * ewSabI;
+  // 同 solOff 口径：相对解区视图下标 j·I
+  const peerOff = j * ewSabI;
   const cand = ewSabSol.slice(peerOff, peerOff + ewSabI);
   if(Atomics.load(ewSabCtrl, 4 * j) !== peerSeq) return;
   ewSabLastSeq[j] = peerSeq;
