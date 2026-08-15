@@ -20,6 +20,17 @@
 var engOrchState = null;
 
 // ----------------------------------------------------------------------------
+// SAB 增强档能力探测（期 3）：仅 crossOriginIsolated === true 且 SharedArrayBuffer
+// 可用时启用 SAB 回火直连通道；file:// 环境 crossOriginIsolated 恒 false → 走 broker
+// （行为与现状完全一致）。隐藏开关 window.__ENGINE_SAB_OFF__ 真值 = 强制 broker
+// （风格与 __ENGINE_TEMPERING_OFF__/__ENGINE_LNS_ON__ 一致）。
+// ----------------------------------------------------------------------------
+function engOrchSabAvailable(){
+  if(typeof window !== 'undefined' && window.__ENGINE_SAB_OFF__) return false;
+  return typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true && typeof SharedArrayBuffer !== 'undefined';
+}
+
+// ----------------------------------------------------------------------------
 // Portfolio 路由与 SA Worker 初始化
 // opts = {engineMode, searchMode, workerCount, payload}
 // payload 即旧版 Worker 启动负载（items/activeMask/W/H/limits/统计与清单口径等），
@@ -56,6 +67,16 @@ function engOrchCreateWorkers(opts){
   };
   const saCount = engineMode === 'hybrid' ? K : Math.max(0, K - 1);
   const temperingOn = !window.__ENGINE_TEMPERING_OFF__ && saCount >= 2;
+  // SAB 增强档（期 3）：回火开启且 crossOriginIsolated 时建立 SAB 直连通道（固定槽位+
+  // 序列号+Atomics 通知），替代 broker 的 swap-req/swap-accept 消息对；任何失败回落 broker。
+  // K=1（saCount<2）或 file:// 永不启用，单 Worker 行为不变。
+  let sab = null, sabMode = false;
+  if(temperingOn && engOrchSabAvailable()){
+    try{
+      sab = new SharedArrayBuffer(32 * saCount + 4 * saCount * model.I);
+      sabMode = true;
+    }catch(e){ sab = null; sabMode = false; } // SAB 初始化失败：照常走 broker
+  }
   // 预计算：uid→物品下标、每物品 mask 串→全局摆放下标（DFS 种子映射与分组计数用）
   const uidIndex = new Map();
   const plIndex = [];
@@ -76,7 +97,9 @@ function engOrchCreateWorkers(opts){
     byTemp: new Map(),    // tempIndex → worker
     saWorkers: [],
     pairParity: 0,        // 奇偶轮转位
-    T0: 0                 // 温度标度：由 Worker 标定的 parts.T0 同步（engOrchConvertIncumbentLite）
+    T0: 0,                // 温度标度：由 Worker 标定的 parts.T0 同步（engOrchConvertIncumbentLite）
+    sabMode,              // 期 3：本会话回火通道是否走 SAB 直连（false = broker）
+    saLast: null          // 期 3：最近一次 SA progress 摘要（终态 statusBox 追加用）
   };
   const workers = [];
   for(let n = 0; n < K - saCount; n++) workers.push(createSolverWorker()); // auto 的 DFS 成员（下标 0）
@@ -85,7 +108,7 @@ function engOrchCreateWorkers(opts){
     w._engineKind = 'sa';
     w._tempIndex = n;
     const buf = bundle.buffer.slice(0); // 每 Worker 独立副本（Transferable 发出即脱离）
-    w.postMessage({
+    const initMsg = {
       type: 'init', buffer: buf, offsets: bundle.offsets,
       meta: {
         seedOffset: Math.imul(workers.length + 1, 0x85ebca6b), // 与旧 seedOffset 同式，随最终下标唯一
@@ -93,9 +116,13 @@ function engOrchCreateWorkers(opts){
         requiredTotalItems, requiredTotalArea: payload.requiredTotalArea,
         requiredTotalBase: payload.requiredTotalBase, skippedCount,
         tempIndex: n, swapEnabled: temperingOn,
-        lnsEnabled: !!window.__ENGINE_LNS_ON__ // 期 2 收口：LNS 默认关闭；隐藏开关 __ENGINE_LNS_ON__ 开启（只加法新键，冻结契约不变）
+        lnsEnabled: !!window.__ENGINE_LNS_ON__, // 期 2 收口：LNS 默认关闭；隐藏开关 __ENGINE_LNS_ON__ 开启（只加法新键，冻结契约不变）
+        sabMode,                 // 期 3：SAB 直连通道开关（只加法新键；false/缺省 = broker）
+        saCount: sabMode ? saCount : 0
       }
-    }, [buf]);
+    };
+    if(sabMode) initMsg.sab = sab; // SAB 经 postMessage 结构化克隆传递（不可放入 transfer list）
+    w.postMessage(initMsg, [buf]);
     workers.push(w);
     engOrchState.saWorkers.push(w);
   }
@@ -322,6 +349,36 @@ function engOrchNoteProgress(worker, msg){
   if(rec.kind === 'sa' && msg && msg.fullPackingFound === undefined){
     msg.fullPackingFound = !!msg.bestComplete;
   }
+  // 期 3：留存最近一次 SA progress 摘要（终态 statusBox 追加用；只读新键，不改 msg）
+  if(rec.kind === 'sa' && msg && (msg.saTemp !== undefined || msg.saAcceptRate !== undefined || msg.saItersPerSec !== undefined)){
+    const prev = engOrchState.saLast || {};
+    engOrchState.saLast = {
+      temp: msg.saTemp ?? prev.temp,
+      acceptRate: msg.saAcceptRate ?? prev.acceptRate,
+      itersPerSec: msg.saItersPerSec ?? prev.itersPerSec,
+      restarts: msg.restarts ?? prev.restarts ?? 0,
+      opTop3: Array.isArray(msg.saOpTop3) ? msg.saOpTop3 : prev.opTop3
+    };
+  }
+}
+
+// ----------------------------------------------------------------------------
+// 期 3：SA 终态摘要。solver.js finishWorker 在 renderStats（冻结）之后调用，
+// 非 null 时向 statusBox.textContent 条件追加。仅 SA 参与过且上报过 progress 的
+// 会话返回非 null；legacy/fast 会话恒 null，statusBox 输出逐字不变。
+// ----------------------------------------------------------------------------
+function engOrchSaSummary(){
+  if(!engOrchState || !engOrchState.saWorkers || !engOrchState.saWorkers.length) return null;
+  if(!engOrchState.saLast) return null;
+  return {
+    workerCount: engOrchState.saWorkers.length,
+    sabMode: !!engOrchState.sabMode,
+    temp: engOrchState.saLast.temp,
+    acceptRate: engOrchState.saLast.acceptRate,
+    itersPerSec: engOrchState.saLast.itersPerSec,
+    restarts: engOrchState.saLast.restarts,
+    opTop3: engOrchState.saLast.opTop3
+  };
 }
 
 // ----------------------------------------------------------------------------
@@ -352,6 +409,8 @@ if(typeof window !== 'undefined'){
   window.engOrchConvertIncumbentLite = engOrchConvertIncumbentLite;
   window.engOrchConvertDone = engOrchConvertDone;
   window.engOrchNoteProgress = engOrchNoteProgress;
+  window.engOrchSaSummary = engOrchSaSummary;
+  window.engOrchSabAvailable = engOrchSabAvailable;
   window.engOrchOnDfsIncumbent = engOrchOnDfsIncumbent;
   window.engOrchEnergyOf = engOrchEnergyOf;
   window.engOrchGroupCounts = engOrchGroupCounts;

@@ -989,6 +989,14 @@ function ewLoadSolution(sol){
 // ------------------------- 上报 -------------------------
 function ewSendProgress(now){
   const secs = Math.max(1e-3, (now - started) / 1000);
+  // 算子 Top3（期 3 只加法新键）：按当前 opWeights 排序取前 3；纯上报逻辑，
+  // 排序/切片不消耗 RNG（不触碰 ewRand），求解过程与 RNG 序列不受影响。
+  const opNames = ['relocate','moveGreedy','swapPair','removeInsert','shuffleRegion','insertMissing','逃逸重建','lnsSmall','lnsBig'];
+  const opIdx = [];
+  for(let i = 0; i < 9; i++) opIdx.push(i);
+  opIdx.sort((a, b) => opWeights[b] - opWeights[a] || a - b);
+  const saOpTop3 = [];
+  for(let t = 0; t < 3; t++) saOpTop3.push({name: opNames[opIdx[t]], w: Math.round(opWeights[opIdx[t]] * 100) / 100});
   self.postMessage({
     type: 'progress', stage: 'SA 退火', nodes: iters, elapsed: Math.round(now - started),
     bestComplete, bestArea, bestBase, bestBonus, bestTotal: bestBase + bestBonus,
@@ -996,7 +1004,8 @@ function ewSendProgress(now){
     totalArea: ewMeta.requiredTotalArea, totalItems: ewMeta.requiredTotalItems,
     restarts: reheatCount, saTemp: curT,
     saAcceptRate: totalMoves > 0 ? acceptCount / totalMoves : 0,
-    saItersPerSec: Math.round(iters / secs)
+    saItersPerSec: Math.round(iters / secs),
+    saOpTop3
   });
 }
 function ewSendDone(now){
@@ -1009,6 +1018,48 @@ function ewSendDone(now){
     totalItems: ewMeta.requiredTotalItems, assignmentStrategy: 'sa_alns',
     singletonDeferredCount: 0, assignmentChecks: iters, engine: 'sa'
   });
+}
+
+// ------------------------- SAB 回火直连通道（期 3 增强档） -------------------------
+// 固定槽位 + 序列号 + Atomics 通知的简单直传结构（后续可扩展为环形队列）。
+// 每会话一块 SharedArrayBuffer，槽位布局（N=SA Worker 数，I=物品数）：
+//   [0, 16N) Int32 控制区：每槽 4 字，[4k] = 发布序号 seq
+//   [16N, 32N) Float64 数据区：每槽 2 字，[2k] = 能量 E，[2k+1] = 温度标度 T0
+//   [32N, ...) Int32 解区：每槽 I 个摆放下标
+// 仅 crossOriginIsolated 环境启用（orchestrator 探测）；file:// 恒走 broker。
+// 与 broker 档的交换时序允许不同（跨档不要求逐字一致）；接受判定在 Worker 内完成，
+// 仅在对手有新发布时消耗一次 RNG（broker 档消耗的是主线程 Math.random，不耗 Worker RNG）。
+function ewSabExchange(){
+  const i = ewSabSlot;
+  // 1) 发布本 Worker 当前解：先写解/能量/T0，再 Atomics.add 递增 seq（兼作发布屏障）
+  const solOff = 8 * ewSabN + i * ewSabI;
+  ewSabSol.set(solPl, solOff);
+  ewSabF64[2 * i] = curEnergy;
+  ewSabF64[2 * i + 1] = T0;
+  Atomics.add(ewSabCtrl, 4 * i, 1);
+  // 2) 奇偶轮转配对（与 broker 同规则：i%2===parity 配 i+1，否则配 i-1）
+  const j = (i % 2 === ewSabParity) ? i + 1 : i - 1;
+  ewSabParity ^= 1;
+  if(j < 0 || j >= ewSabN) return;
+  const peerSeq = Atomics.load(ewSabCtrl, 4 * j);
+  if(peerSeq === 0 || peerSeq <= ewSabLastSeq[j]) return; // 对手无新发布：不耗 RNG 直接返回
+  // 3) 先拷贝对手解再复核 seq：读取期间若对手又发布则放弃本次（避免半更新解）
+  const peerOff = 8 * ewSabN + j * ewSabI;
+  const cand = ewSabSol.slice(peerOff, peerOff + ewSabI);
+  if(Atomics.load(ewSabCtrl, 4 * j) !== peerSeq) return;
+  ewSabLastSeq[j] = peerSeq;
+  // 4) Metropolis 接受判定（与 broker engOrchHandleSwapReq 同式）：β_k = 1/max(Tmin, T0·0.85^k)
+  const Ei = curEnergy;
+  const Ej = ewSabF64[2 * j];
+  if(!Number.isFinite(Ej)) return;
+  const k = Math.min(i, j);
+  const Ek = k === i ? Ei : Ej;
+  const Ek1 = k === i ? Ej : Ei;
+  const TminS = T0 * 1e-4;
+  const betaK = 1 / Math.max(TminS, T0 * Math.pow(0.85, k));
+  const betaK1 = 1 / Math.max(TminS, T0 * Math.pow(0.85, k + 1));
+  const acceptProb = Math.min(1, Math.exp((betaK - betaK1) * (Ek1 - Ek)));
+  if(ewRand() < acceptProb) ewLoadSolution(cand); // 接受：载入对手解（与 swap-accept 同路径）
 }
 
 // ------------------------- 消息队列处理（主循环每 1024 迭代检查） -------------------------
@@ -1321,11 +1372,15 @@ function ewRunChunk(){
       if(stoppedFlag) break;
       if(now - lastProgress >= 500){ lastProgress = now; ewSendProgress(now); }
     }
-    // swap-req：每 2048 迭代且距上次 ≥50ms，发出即走（不等待）；sol 拷贝 Transferable
+    // swap 通道：SAB 档就地发布+检查（零消息）；broker 档发 swap-req，每 2048 迭代且距上次 ≥50ms，发出即走（不等待）；sol 拷贝 Transferable
     if(swapEnabled && (iters & 2047) === 0 && now - lastSwapReq >= 50){
       lastSwapReq = now;
-      const copy = new Int32Array(solPl);
-      self.postMessage({type:'swap-req', sol: copy}, [copy.buffer]);
+      if(ewSabActive){
+        ewSabExchange();
+      }else{
+        const copy = new Int32Array(solPl);
+        self.postMessage({type:'swap-req', sol: copy}, [copy.buffer]);
+      }
     }
   }
   ewFinishSearch();
@@ -1377,6 +1432,23 @@ function engineWorkerMain(){
       ewInitOps();
       ewInitialSolution();
       const tempIndex = Math.max(0, Number(ewMeta.tempIndex) || 0);
+      // SAB 回火直连通道（期 3 增强档）：仅当 init 显式带 SharedArrayBuffer（crossOriginIsolated
+      // 环境由 orchestrator 探测后下发）时启用；任何建视图失败静默降级为“不交换”（正确性不受影响）。
+      // file:// 环境探测恒 false，不会走到此分支。
+      ewSabActive = false;
+      try{
+        if(ewMeta.swapEnabled && ewMeta.sabMode === true && typeof SharedArrayBuffer !== 'undefined' && msg.sab instanceof SharedArrayBuffer){
+          const sabN = Math.max(0, Math.floor(Number(ewMeta.saCount) || 0));
+          if(sabN >= 2 && tempIndex < sabN && msg.sab.byteLength >= 32 * sabN + 4 * sabN * m.I){
+            ewSabCtrl = new Int32Array(msg.sab, 0, 4 * sabN);
+            ewSabF64 = new Float64Array(msg.sab, 16 * sabN, 2 * sabN);
+            ewSabSol = new Int32Array(msg.sab, 32 * sabN, sabN * m.I);
+            ewSabN = sabN; ewSabSlot = tempIndex; ewSabI = m.I;
+            ewSabParity = 0; ewSabLastSeq = new Int32Array(sabN);
+            ewSabActive = true;
+          }
+        }
+      }catch(e){ ewSabActive = false; }
       ewCalibrateT0(tempIndex);
       ewRebuildExpTable();
       started = performance.now();
@@ -1443,7 +1515,8 @@ function engWorkerStateDecls(){
     + 'var ewLnsStackIt=null,ewLnsStackPtr=null,ewLnsStackCnt=null,ewLnsOrder=null;\n'
     + 'var ewLnsCandP=null,ewLnsCandE=null;\n'
     + 'var ewLnsOriginPl=null,ewLnsBestSol=null,ewLnsBestItems=0;\n'
-    + 'var ewLnsEnabled=false;\n';
+    + 'var ewLnsEnabled=false;\n'
+    + 'var ewSabActive=false,ewSabCtrl=null,ewSabF64=null,ewSabSol=null,ewSabN=0,ewSabSlot=0,ewSabI=0,ewSabParity=0,ewSabLastSeq=null;\n';
 }
 function engWorkerPartFunctions(){
   return [
@@ -1467,6 +1540,7 @@ function engWorkerPartFunctions(){
     ewLnsUB, ewLnsSearch, ewLnsOp,
     ewInitOps, ewPickOp, ewRunOp, ewSegmentUpdate,
     ewInitialSolution, ewLoadSolution,
+    ewSabExchange,
     ewSendProgress, ewSendDone, ewDrainMessages, ewRejectRestore,
     ewCalibrateT0, ewRefineSolution, ewFinishPolish, ewRunChunk, ewFinishSearch
   ];

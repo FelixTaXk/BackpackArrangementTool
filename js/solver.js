@@ -122,7 +122,13 @@ function renderLiveSolverStatus(){
 当前放入物品：${s.bestItems ?? 0}/${s.totalItems ?? inventory.length}
 当前空间利用：${Math.max(0,Number(s.bestArea)||0)}/${s.activeCells}
 ${s.restarts ? `多起点尝试：${s.restarts}\n` : ''}
-求解器可能正在评估一个耗时较长的完整候选；计时持续变化即表示任务仍在运行。
+${s.sa ? `模拟退火温度：${Number(s.sa.temp ?? 0).toPrecision(4)}
+模拟退火接受率：${((Number(s.sa.acceptRate) || 0) * 100).toFixed(1)}%
+模拟退火迭代速率：${((Number(s.sa.itersPerSec) || 0) / 10000).toFixed(1)} 万/秒
+模拟退火重热次数：${Number(s.sa.restarts) || 0}
+算子权重 Top3：${(s.sa.opTop3 || []).map(o => `${o.name}(${Number(o.w || 0).toFixed(2)})`).join('、')}
+（注：lnsSmall/lnsBig 默认关闭，此处权重非零不代表正在执行。）
+` : ''}求解器可能正在评估一个耗时较长的完整候选；计时持续变化即表示任务仍在运行。
 可点击“停止计算”保留当前已显示结果。`;
 }
 
@@ -154,6 +160,18 @@ function updateSolverStatusFromMessage(msg,activeCells){
     restarts:msg.restarts ?? solverStatusState.restarts,
     lastReportAt:performance.now()
   });
+  // SA 实时行（期 3，条件渲染）：仅当消息带 SA 键时记录；legacy/fast 会话消息不带
+  // SA 键，solverStatusState.sa 恒为 undefined，渲染时整行不出现，输出逐字不变。
+  if(msg.saTemp !== undefined || msg.saAcceptRate !== undefined || msg.saItersPerSec !== undefined){
+    const prev = solverStatusState.sa || {};
+    solverStatusState.sa = {
+      temp: msg.saTemp ?? prev.temp,
+      acceptRate: msg.saAcceptRate ?? prev.acceptRate,
+      itersPerSec: msg.saItersPerSec ?? prev.itersPerSec,
+      restarts: msg.restarts ?? prev.restarts ?? 0,
+      opTop3: Array.isArray(msg.saOpTop3) ? msg.saOpTop3 : prev.opTop3
+    };
+  }
   renderLiveSolverStatus();
 }
 
@@ -211,8 +229,9 @@ function solveAndRender(){
   if(inventory.length===0){ alert('请先从法宝库添加已有法宝。'); return; }
   if(items.length===0){ alert('已有物品都无法放入当前空间。请调整空间、旋转/镜像设置或物品清单。'); return; }
   const searchMode=document.getElementById('searchMode').value;
-  // 求解引擎：DOM 取值缺省 legacy；fast 档恒走 legacy（见 engOrchCreateWorkers，零行为变化铁律）
-  const engineMode=(document.getElementById('engineMode') && document.getElementById('engineMode').value) || 'legacy';
+  // 求解引擎：DOM 取值缺省 auto（期 3 放量默认档）；fast 档恒走 legacy（见 engOrchCreateWorkers，零行为变化铁律）。
+  // 老存档兼容（期 3 拍板：保守）：persistence 读档缺字段回退保持 legacy（老用户读档行为不变），已存值跟随存档。
+  const engineMode=(document.getElementById('engineMode') && document.getElementById('engineMode').value) || 'auto';
   const requestedNodeLimit = Math.max(1000, Number(document.getElementById('nodeLimit').value)||2500000);
   const requestedTimeLimit = Math.max(100, Number(document.getElementById('timeLimit').value)||20000);
   const nodeLimit=searchMode==='fast'?Math.min(requestedNodeLimit,350000):requestedNodeLimit;
@@ -277,6 +296,15 @@ ${skipped.length>0?'存在单件无法合法放置的物品，将直接搜索最
     solverWorkers=[]; solverWorker=null; stopSolverStatusHeartbeat(); setSolverRunning(false);
     renderResultGrid(best);
     renderStats(best,totalNodes,lastResult.elapsed,meta.stopped,activeCells,skipped,lastResult.solverMeta);
+    // SA 终态摘要（期 3）：renderStats 冻结不可改，此处条件追加。仅 SA 参与过的会话
+    // engOrchSaSummary 返回非 null；legacy/fast 会话恒 null，statusBox 输出逐字不变。
+    const saSummary = (typeof engOrchSaSummary === 'function') ? engOrchSaSummary() : null;
+    if(saSummary){
+      const top3 = Array.isArray(saSummary.opTop3) ? saSummary.opTop3.map(o => `${o.name}(${Number(o.w || 0).toFixed(2)})`).join('、') : '-';
+      document.getElementById('statusBox').textContent += `\n\n模拟退火（SA）摘要：${saSummary.workerCount} 个 SA Worker 参与${saSummary.sabMode ? '（SAB 直连回火通道）' : '（主线程 broker 回火）'}
+末次温度：${Number(saSummary.temp ?? 0).toPrecision(4)}，末次接受率：${((Number(saSummary.acceptRate) || 0) * 100).toFixed(1)}%，迭代速率：${((Number(saSummary.itersPerSec) || 0) / 10000).toFixed(1)} 万/秒，重热次数：${Number(saSummary.restarts) || 0}
+算子权重 Top3：${top3}（lnsSmall/lnsBig 默认关闭，权重非零不代表已执行）`;
+    }
   };
   solverWorkers.forEach((worker,workerIndex)=>{ worker.onmessage = function(ev){
     let msg = ev.data;

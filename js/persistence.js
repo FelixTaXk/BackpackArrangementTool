@@ -48,7 +48,9 @@ function applySharedSettings(data){
   }
   if(Number(data.nodeLimit) >= 1000) document.getElementById('nodeLimit').value = String(Math.floor(Number(data.nodeLimit)));
   if(Number(data.timeLimit) >= 100) document.getElementById('timeLimit').value = String(Math.floor(Number(data.timeLimit)));
-  // 求解引擎：非法或缺省值（旧存档）一律回退 legacy
+  // 求解引擎：非法或缺省值（旧存档）一律回退 legacy。
+  // 期 3 决策（拍板：保守）：页面默认档已改 auto（index.html selected + solver.js DOM 缺省），
+  // 但老存档缺此字段读档时仍回退 legacy（老用户读档行为不变）；已存值跟随存档。
   document.getElementById('engineMode').value = (data.engineMode === 'hybrid' || data.engineMode === 'auto') ? data.engineMode : 'legacy';
   document.getElementById('parallelSearch').checked = !!data.parallelSearch;
   document.getElementById('workerCountLabel').hidden = !data.parallelSearch;
