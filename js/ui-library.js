@@ -129,8 +129,8 @@ function renderItemsTable(){
     const area = it.cells.length;
     const attr = ATTRIBUTE_MAP[it.attribute] || {name:it.attribute, displayColor:'#6b7280'};
     const qualityOpts = variants.map(v=>`<option value="${v.idx}" data-q="${QUALITY_NAME_TO_ID[v.it.quality] || ''}"${v === defVariant ? ' selected' : ''}>${escapeHtml(v.it.quality)}</option>`).join('');
-    // 长老星级下拉选项（表驱动，文案「N星（无加成/+X%）」，默认 1 星）；仅红品质行展示。
-    const starOpts = STAR_LEVEL_BONUS.map((b,i)=>`<option value="${i+1}"${i === 0 ? ' selected' : ''}>${i+1}星${b === 0 ? '（无加成）' : `（+${Math.round(b*100)}%）`}</option>`).join('');
+    // 长老星级下拉选项（表驱动，文案纯「N星」，默认 1 星）；仅红品质行展示。
+    const starOpts = STAR_LEVEL_BONUS.map((b,i)=>`<option value="${i+1}"${i === 0 ? ' selected' : ''}>${i+1}星</option>`).join('');
     const defIsRed = it.quality === '红';
     const defQualityId = QUALITY_NAME_TO_ID[it.quality] || '';
     const tr = document.createElement('tr');

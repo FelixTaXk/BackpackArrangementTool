@@ -222,6 +222,7 @@ function compareSolverBest(a,b){
 
 // 属性权重（一期线性）读取闸门（全局函数，ui-focus.js 复用；persistence.js 独立同口径校验
 //（读档时校验存档形状，语义不同））：
+// - 权重口径开关：#weightMode 存在且 value !== 'custom'（默认口径）→ null（默认 ≡ 全 1，逐字节零污染）；
 // - window.__WEIGHTS_OFF__ 为真 → null（仿 __FOCUS_OFF__ 回退闸，强制全 1 语义）；
 // - 逐项判定：控件缺失、value.trim() 为空串、非有限、<0、或 >1e6 上限，任一成立 → null
 //   （非法值整体回退默认全 1）。清空/空白视为非法回退，非「0」；上限 1e6 防极端权重使
@@ -230,6 +231,9 @@ function compareSolverBest(a,b){
 //   浮点重算会污染 legacy 哈希种子 solver-worker.js L25/L56，改变 RNG 序列）；
 // - 否则返回原始数组 [wAtk, wDef, wHp]。
 function readWeightMul(){
+  // 权重口径首判：默认口径 ≡ 全 1，直接 return null（改写块/口径行/settings 键全不执行）；仅自定义口径才读三 input。
+  const modeEl = document.getElementById('weightMode');
+  if(modeEl && modeEl.value !== 'custom') return null;
   if(window.__WEIGHTS_OFF__) return null;
   const weightMul = [];
   for(const id of ['weightAtk','weightDef','weightHp']){

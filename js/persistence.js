@@ -14,6 +14,8 @@ function saveConfig(){
     // 属性权重（一期线性）：存三 input 的原始字符串数组（0 必须存活，禁止 Number(..)||1 一类归一）；
     // 旧存档无此键读档行为不变，schemaVersion 不变
     weightMul:['weightAtk','weightDef','weightHp'].map(id=>(document.getElementById(id) || {}).value ?? ''),
+    // 权重口径开关：存 select 原始值（default/custom）；读取侧白名单校验，缺失/非法不触碰 DOM，schemaVersion 不变
+    weightMode:(document.getElementById('weightMode') || {}).value,
     nodeLimit:Number(document.getElementById('nodeLimit').value)||2500000,
     timeLimit:Number(document.getElementById('timeLimit').value)||20000,
     parallelSearch:document.getElementById('parallelSearch').checked,
@@ -65,11 +67,19 @@ function applySharedSettings(data){
   // 仅 Array.isArray && length===3 且逐项 Number.isFinite(Number(v)) && Number(v)>=0 才写回，非法值整体忽略保持默认 1。
   // schemaVersion 不变；程序化赋值不派发 change（先例见上方 searchMode 注释），手工同步 chips 选中态。
   if(Array.isArray(data.weightMul) && data.weightMul.length === 3 && data.weightMul.every(v=>Number.isFinite(Number(v)) && Number(v) >= 0)){
-    // 回写归一化为十进制串：校验用 Number(v) 会接受 true/"0x10"/"٣" 等，原样赋给 number input
-    // 会被 HTML 净化为 ''，再被 readWeightMul 判非法；String(Number(v)) 保证校验值与 DOM 值回环一致。
+    // 回写归一化为十进制串：校验用 Number(v) 会接受 "0x10"/true 一类字面量，原样赋给 number input
+    // 会被 HTML 净化为 ''，再被 readWeightMul 判非法，故需归一化；而 "٣" 一类非 ASCII 数字串
+    // Number() 判 NaN，在校验处即整体回退（不进入本分支）；String(Number(v)) 保证校验值与 DOM 值回环一致。
     document.getElementById('weightAtk').value = String(Number(data.weightMul[0]));
     document.getElementById('weightDef').value = String(Number(data.weightMul[1]));
     document.getElementById('weightHp').value = String(Number(data.weightMul[2]));
+    if(typeof syncWeightPresetChips === 'function') syncWeightPresetChips();
+  }
+  // 权重口径：仅白名单值写 DOM（老存档缺失/非法不触碰，保持 DOM 现状）；
+  // 程序化赋值不派发 change（先例见上方 searchMode 注释），写后手工同步 wrap 显隐与 chips 选中态。
+  if(data.weightMode === 'default' || data.weightMode === 'custom'){
+    document.getElementById('weightMode').value = data.weightMode;
+    document.getElementById('weightCustomWrap').hidden = data.weightMode !== 'custom';
     if(typeof syncWeightPresetChips === 'function') syncWeightPresetChips();
   }
   document.getElementById('parallelSearch').checked = !!data.parallelSearch;

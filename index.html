@@ -105,14 +105,17 @@
               <label><input id="parallelSearch" type="checkbox"> 并行搜索</label>
               <label id="workerCountLabel" hidden>Worker 数量 <input id="workerCount" type="number" min="2" max="12" step="1" value="2"><span id="workerCountHint" class="hint"></span></label>
             </div>
-            <div class="row">
-              <label>属性权重 攻 <input id="weightAtk" type="number" min="0" step="0.1" value="1"></label>
-              <label>防 <input id="weightDef" type="number" min="0" step="0.1" value="1"></label>
-              <label>生命 <input id="weightHp" type="number" min="0" step="0.1" value="1"></label>
-              <span id="weightPresets">
-                <button id="weightPresetOfficial" class="attr-medallion active" data-weights="1,1,1">官方定价</button>
-                <button id="weightPresetAtk" class="attr-medallion" data-weights="3,0,0">纯攻击力</button>
-                <button id="weightPresetTank" class="attr-medallion" data-weights="0,3,3">生存续航</button>
+            <div class="row weight-row">
+              <label>权重口径 <select id="weightMode"><option value="default" selected>默认</option><option value="custom">自定义</option></select></label>
+              <span id="weightCustomWrap" hidden>
+                <label>攻 <input id="weightAtk" type="number" min="0" step="0.1" value="1"></label>
+                <label>防 <input id="weightDef" type="number" min="0" step="0.1" value="1"></label>
+                <label>生命 <input id="weightHp" type="number" min="0" step="0.1" value="1"></label>
+                <span id="weightPresets">
+                  <button id="weightPresetOfficial" class="attr-medallion active" data-weights="1,1,1">官方定价</button>
+                  <button id="weightPresetAtk" class="attr-medallion" data-weights="3,0,0">纯攻击力</button>
+                  <button id="weightPresetTank" class="attr-medallion" data-weights="0,3,3">生存续航</button>
+                </span>
               </span>
             </div>
             <div class="row">

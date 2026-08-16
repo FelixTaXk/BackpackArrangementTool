@@ -95,7 +95,7 @@ textarea{width:100%;min-height:82px;font-family:ui-monospace,Consolas,monospace;
 input:disabled{background:var(--paper-deep);color:var(--ink-soft)}
 /* 复选框染朱砂 */
 input[type="checkbox"]{accent-color:var(--cinnabar);width:15px;height:15px}
-/* ============ 按钮：次级=米色墨徽，主=朱砂木牌，危险=木牌红字 ============ */
+/* ============ 按钮：次级=米色墨徽，主=朱砂木牌，危险=素面红字 ============ */
 button{
   border:1.5px solid var(--ink-soft);color:var(--ink);border-radius:999px;padding:7px 14px;cursor:pointer;margin:3px 4px 3px 0;
   background:radial-gradient(circle at 50% 28%,var(--cream),var(--paper-deep));
@@ -115,11 +115,8 @@ button.primary{
 }
 button.primary:hover{filter:brightness(1.06);box-shadow:0 2px 0 rgba(43,38,34,.3),0 0 0 2.5px var(--gold),inset 0 1px 0 rgba(248,241,223,.3)}
 button.primary:disabled{filter:none}
-button.danger{
-  border:2px solid var(--wood-deep);border-radius:9px;color:var(--cinnabar);font-weight:700;
-  background:repeating-linear-gradient(92deg, rgba(255,255,255,.08) 0 2px, transparent 2px 7px),linear-gradient(180deg,#c99a6b,var(--wood) 60%,var(--wood-deep));
-  text-shadow:0 1px 0 rgba(248,241,223,.4);
-}
+/* 危险钮：与普通按钮同质的素面（继承底色/描边/圆角），仅保留朱砂红字保证米色卡片底上的可读对比。 */
+button.danger{color:var(--cinnabar);font-weight:700}
 button.compact{padding:5px 12px;font-size:12px}
 .btn-flavor{font-family:var(--font-display);font-size:16px;letter-spacing:.18em;display:inline-block}
 .btn-sub{display:block;font-size:10px;font-weight:400;letter-spacing:.02em;opacity:.85;margin-top:1px}
@@ -144,6 +141,13 @@ button.compact{padding:5px 12px;font-size:12px}
 }
 .attr-dot{width:11px;height:11px;border-radius:50%;flex:0 0 auto;border:1px solid rgba(43,38,34,.4);box-shadow:inset 0 -1.5px 2px rgba(0,0,0,.22),inset 0 1px 1px rgba(255,255,255,.4)}
 .attr-medallion.active .attr-dot{border-color:var(--ink)}
+/* 权重预设钮（米色卡片底）：未选中态可见 1px 实线边框 + 墨色文字，仅作用域 #weightPresets，
+   不影响法宝库属性罗盘；选中态 .active 保持全局金色高亮不变。 */
+#weightPresets .attr-medallion:not(.active){border:1px solid var(--ink-soft);color:var(--ink-soft);background:var(--cream)}
+/* 权重自定义区：展开时子元素直接参与 .row  flex 流；收起时 [hidden] 的 display:none!important 覆盖本规则。 */
+#weightCustomWrap{display:contents}
+/* 权重 row 与下方按钮 row 间距（复用 10px 间距尺度），消除紧贴。 */
+.weight-row{margin-bottom:10px}
 /* ============ 提示/行/表 ============ */
 .hint{color:var(--ink-soft);font-size:12px;margin-top:6px}
 .row{display:flex;flex-wrap:wrap;align-items:center;gap:4px}

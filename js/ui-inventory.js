@@ -1,10 +1,17 @@
 // ui-inventory.js —— 已有法宝清单卡片：清单渲染/格数统计/添加与重编号。加载顺序 8/13，依赖 state、utils、talisman-model。
 'use strict';
 
-// 长老星级下拉选项 HTML（表驱动，文案「N星（无加成/+X%）」）；selectedLv 缺省选 1 星。
+// 长老星级下拉选项 HTML（表驱动，文案纯「N星」）；selectedLv 缺省选 1 星。
 function starLevelOptionsHtml(selectedLv){
   const sel = Number(selectedLv) || 1;
-  return STAR_LEVEL_BONUS.map((b,i)=>`<option value="${i+1}"${sel === i+1 ? ' selected' : ''}>${i+1}星${b === 0 ? '（无加成）' : `（+${Math.round(b*100)}%）`}</option>`).join('');
+  return STAR_LEVEL_BONUS.map((b,i)=>`<option value="${i+1}"${sel === i+1 ? ' selected' : ''}>${i+1}星</option>`).join('');
+}
+
+// 品质行内下拉选项 HTML（绿/蓝/紫/金/红 五选项，口径与库品质 select 一致：
+// option value/data-q = 品质 id，文案 = 品质中文名）；清单品质 select 恒可见（红品也不隐藏，允许红↔其它品质互切）。
+function qualityOptionsHtml(selectedQuality){
+  const selId = QUALITY_NAME_TO_ID[selectedQuality] || selectedQuality;
+  return QUALITY_OPTIONS.map(q=>`<option value="${q.id}" data-q="${q.id}"${selId === q.id ? ' selected' : ''}>${escapeHtml(q.name)}</option>`).join('');
 }
 
 function renderInventoryTable(){
@@ -25,7 +32,7 @@ function renderInventoryTable(){
       <td class="col-no" data-label="编号"><b>#${it.no}</b></td>
       <td class="col-name" data-label="名称"><span class="shape-name">${escapeHtml(it.name)}</span></td>
       <td class="col-attribute" data-label="属性"><span class="attr-tag" style="border-color:${attr.displayColor};color:${attr.displayColor}">${escapeHtml(attr.name)}</span></td>
-      <td class="col-quality" data-label="品质">${it.quality === '红' ? `<select data-star-select data-q="red" data-inv-star data-i="${idx}" title="长老星级：基础属性按星级放大（1星无加成）">${starLevelOptionsHtml(it.starLevel)}</select>` : `<span class="quality-chip" data-quality="${QUALITY_NAME_TO_ID[it.quality] || ''}">${escapeHtml(qualityName(it.quality))}</span>`}</td>
+      <td class="col-quality" data-label="品质"><select data-quality-select data-inv-quality data-i="${idx}" data-q="${QUALITY_NAME_TO_ID[it.quality] || ''}" title="品质可修改：按 id 品质段重建对应品质变体">${qualityOptionsHtml(it.quality)}</select>${it.quality === '红' ? `<select data-star-select data-q="red" data-inv-star data-i="${idx}" title="长老星级：基础属性按星级放大（1星无加成）">${starLevelOptionsHtml(it.starLevel)}</select>` : ''}</td>
       <td class="col-shape" data-label="形状"></td>
       <td class="col-base" data-label="基础属性">${baseStatsLinesHtml(it)}</td>
       <td class="col-bonus" data-label="加成模式">${bonusLinesHtml(it)}</td>
@@ -41,6 +48,32 @@ function renderInventoryTable(){
       const raw = String(e.target.value || '').trim();
       inventory[i].customPriority = raw === '' ? null : Math.max(1, Math.min(99, Math.floor(Number(raw)||1)));
       lastResult = null;
+      renderResultGrid(null);
+    });
+  });
+  // 清单品质行内编辑：按条目 id 替换品质段推导兄弟变体 id（id 规则：拼音属性+品质英文+序号），
+  // 在 itemDefs 找新品质变体后走 normalizeItemRecord 重建（新品质 + 现有 starLevel），保留 uid/no/customPriority；
+  // 切向红品时 starLevel 缺省回退 1 星、切离红品时归 null（normalizeItemRecord 语义）。无变体时提示并重渲染复原下拉。
+  tbody.querySelectorAll('select[data-inv-quality]').forEach(sel=>{
+    sel.addEventListener('change', e=>{
+      const i = Number(e.target.dataset.i);
+      const old = inventory[i];
+      if(!old) return;
+      const newQid = e.target.value;
+      const curQid = QUALITY_NAME_TO_ID[old.quality] || '';
+      if(newQid === curQid) return;
+      const newId = old.id.replace('-' + curQid + '-', '-' + newQid + '-');
+      const def = itemDefs.find(d=>d.id === newId);
+      if(!def){
+        alert(`该法宝没有${(QUALITY_MAP[newQid] || {}).name || newQid}品质变体。`);
+        renderInventoryTable();
+        return;
+      }
+      const rec = normalizeItemRecord({id:newId, uid:old.uid, no:old.no, customPriority:old.customPriority, starLevel:old.starLevel});
+      if(!rec) return;
+      inventory[i] = rec;
+      lastResult = null;
+      renderInventoryTable();
       renderResultGrid(null);
     });
   });

@@ -90,6 +90,14 @@ function bindEvents(){
       syncWeightPresetChips();
     });
   }
+  // 权重口径开关（默认/自定义）：切换自定义区显隐；口径变化使既有结果口径失效。
+  // 默认口径下 readWeightMul 首判返回 null，三 input 与预设钮隐藏且零污染。
+  document.getElementById('weightMode').addEventListener('change', e=>{
+    document.getElementById('weightCustomWrap').hidden = e.target.value !== 'custom';
+    lastResult = null;
+    renderResultGrid(null);
+    syncWeightPresetChips();
+  });
   // 预设钮容器事件委托（仿属性筛选罗盘写法）：程序化赋值不派发 change（先例见 persistence.js 注释），
   // 手工执行同一「清结果 + 同步选中态」逻辑。
   document.getElementById('weightPresets').addEventListener('click', e=>{
