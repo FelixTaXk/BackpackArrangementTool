@@ -13,11 +13,14 @@
   --attr-huo:#c9573f;   --attr-huo-soft:#f0cfc0;
   --attr-tu:#a8845c;    --attr-tu-soft:#e2d2b6;
   --attr-lei:#9a7bc0;   --attr-lei-soft:#ddd2ea;
-  --attr-xie:#c0392b;   --attr-xie-soft:#241a1d;
+  /* --attr-xie/--attr-xie-soft 令牌随任务 #49 常态化一并移除（黑底红字特化已删，不再有引用方） */
   --attr-ti:#8d8d8d;    --attr-ti-soft:#dcd8d0;
   /* 品质色令牌（品质列色块徽标/品质下拉色点联动；文本用墨色保证 AA 对比度） */
   --quality-green:#7db98a; --quality-blue:#6fb1c4; --quality-purple:#b48fd6;
   --quality-gold:#e5a86f;  --quality-red:#d97f79;
+  /* 结果盘/图例品质填充令牌（中等饱和度可辨识，深色数字配白影保证对比） */
+  --quality-fill-green:#b3d4b0; --quality-fill-blue:#a9c3e2; --quality-fill-purple:#cbb3d8;
+  --quality-fill-gold:#ecd9a4;  --quality-fill-red:#e5a79e;
   --font-display:'STKaiti','KaiTi','DFKai-SB','SimSun',serif;
   --font-body:'PingFang SC','Microsoft YaHei UI','Microsoft YaHei','Hiragino Sans GB',system-ui,-apple-system,'Segoe UI',sans-serif;
   --cell:34px;
@@ -142,12 +145,8 @@ button.compact{padding:5px 12px;font-size:12px}
 }
 .attr-dot{width:11px;height:11px;border-radius:50%;flex:0 0 auto;border:1px solid rgba(43,38,34,.4);box-shadow:inset 0 -1.5px 2px rgba(0,0,0,.22),inset 0 1px 1px rgba(255,255,255,.4)}
 .attr-medallion.active .attr-dot{border-color:var(--ink)}
-/* 邪属性罗盘圆徽特化（黑底红字游戏风，仅作用域 #libraryFilterAttribute，不影响权重预设钮 #weightPresets） */
-#libraryFilterAttribute .attr-medallion[data-attr-filter="邪"]{background:#1a1216;border-color:#5a2320;color:#d8574a}
-#libraryFilterAttribute .attr-medallion[data-attr-filter="邪"].active{
-  background:#1a1216;color:#ff6b5e;font-weight:700;border-color:var(--attr-xie);
-  box-shadow:0 0 0 2px var(--attr-xie),0 0 0 4px rgba(192,57,43,.35);
-}
+/* 邪属性罗盘圆徽常态化（任务 #49）：黑底红字特化已删除，背景/边框/文字/active 高亮环
+   全部跟随通用 .attr-medallion 样式；唯一差异为圆点黑色（由 ui-library.js ATTR_MEDALLION_COLORS 邪→#1a1a1a 落地）。 */
 /* 权重预设钮（米色卡片底）：未选中态可见 1px 实线边框 + 墨色文字，仅作用域 #weightPresets，
    不影响法宝库属性罗盘；选中态 .active 保持全局金色高亮不变。 */
 #weightPresets .attr-medallion:not(.active){border:1px solid var(--ink-soft);color:var(--ink-soft);background:var(--cream)}
@@ -186,16 +185,14 @@ button.compact{padding:5px 12px;font-size:12px}
 .cell.inactive{background:#c9c1b2;color:#8a8172;text-shadow:0 1px 0 rgba(248,241,223,.6)}
 #resultGrid .cell{border-color:rgba(138,90,51,.5);background:#faf4e6;color:var(--ink)}
 #resultGrid .cell.item-cell{font-size:13px;font-weight:800;text-shadow:0 1px 0 rgba(255,255,255,.65)}
-/* 结果格按所占法宝属性染色（data-attr 由 ui-theme.js 反推补设；!important 覆盖冻结渲染的内联底色） */
-#resultGrid .cell.item-cell[data-attr="金"]{background:var(--attr-jin-soft)!important}
-#resultGrid .cell.item-cell[data-attr="木"]{background:var(--attr-mu-soft)!important}
-#resultGrid .cell.item-cell[data-attr="水"]{background:var(--attr-shui-soft)!important}
-#resultGrid .cell.item-cell[data-attr="火"]{background:var(--attr-huo-soft)!important}
-#resultGrid .cell.item-cell[data-attr="土"]{background:var(--attr-tu-soft)!important}
-#resultGrid .cell.item-cell[data-attr="雷"]{background:var(--attr-lei-soft)!important}
-#resultGrid .cell.item-cell[data-attr="体"]{background:var(--attr-ti-soft)!important}
-/* 邪属性结果格：黑底红字特化（覆盖默认墨字白影） */
-#resultGrid .cell.item-cell[data-attr="邪"]{background:var(--attr-xie-soft)!important;color:#e0877c!important;text-shadow:0 1px 0 rgba(0,0,0,.6)!important}
+/* 结果格按品质填充中等饱和度底色（data-quality 由 ui-theme.js 补设；!important 覆盖冻结渲染的过浅内联底色）。
+   数字用各品质深墨字 + 白影保证对比；邪格自任务 #49 起与同品质格完全一致，不再豁免。 */
+#resultGrid .cell.item-cell[data-quality="green"]{background:var(--quality-fill-green)!important;color:#22361f!important;text-shadow:0 1px 0 rgba(255,255,255,.45)!important}
+#resultGrid .cell.item-cell[data-quality="blue"]{background:var(--quality-fill-blue)!important;color:#1b2f4a!important;text-shadow:0 1px 0 rgba(255,255,255,.45)!important}
+#resultGrid .cell.item-cell[data-quality="purple"]{background:var(--quality-fill-purple)!important;color:#33224a!important;text-shadow:0 1px 0 rgba(255,255,255,.45)!important}
+#resultGrid .cell.item-cell[data-quality="gold"]{background:var(--quality-fill-gold)!important;color:#4a3608!important;text-shadow:0 1px 0 rgba(255,255,255,.45)!important}
+#resultGrid .cell.item-cell[data-quality="red"]{background:var(--quality-fill-red)!important;color:#571f19!important;text-shadow:0 1px 0 rgba(255,255,255,.45)!important}
+/* 邪属性结果格黑底红字特化已于任务 #49 删除：邪格随品质填充，与其他法宝一致。 */
 #spaceGrid .cell{cursor:pointer}
 #spaceGrid .cell:hover{outline:2px solid var(--gold-bright);outline-offset:-2px;z-index:2}
 /* 形状迷你预览：墨色块 */
@@ -260,8 +257,10 @@ th{font-size:12px;color:var(--ink-soft);background:var(--paper-deep);white-space
 tbody tr:nth-child(even){background:rgba(239,228,205,.5)}
 tbody tr:hover{background:rgba(201,162,75,.14)}
 .shape-name{font-weight:600;white-space:nowrap;font-family:var(--font-display);font-size:14.5px;letter-spacing:.04em}
-.name-line{display:flex;flex-wrap:nowrap;align-items:center;justify-content:space-between;gap:16px}
-.name-line .hint{margin-top:0;margin-left:auto;white-space:nowrap}
+/* 名称行：列宽不足时允许「N 格」折到下一行完整展示，不被相邻属性列裁切（flex-wrap + 不换行 hint） */
+.name-line{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:2px 16px;min-width:0}
+.name-line .shape-name{min-width:0}
+.name-line .hint{margin-top:0;margin-left:auto;white-space:nowrap;flex:0 0 auto}
 /* ============ 结果区 ============ */
 .output-wrap{display:grid;grid-template-columns:1fr 390px;gap:16px;align-items:start}
 .stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
@@ -282,6 +281,13 @@ tbody tr:hover{background:rgba(201,162,75,.14)}
 .legend{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .tag{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border:1.5px solid var(--line);border-radius:999px;background:var(--paper-deep);font-size:12px;color:var(--ink-soft)}
 .sw{width:12px;height:12px;border-radius:3px;border:1px solid rgba(43,38,34,.35)}
+/* 图例色块填充对应品质色（data-quality 由 ui-theme.js 补设；!important 覆盖冻结渲染的内联底色，
+   描边沿用 config.js QUALITY_DISPLAY_STYLES 本色与格边框同调） */
+#legend .sw[data-quality="green"]{background:var(--quality-green)!important;border-color:#3f7d44!important}
+#legend .sw[data-quality="blue"]{background:var(--quality-blue)!important;border-color:#3f6e9d!important}
+#legend .sw[data-quality="purple"]{background:var(--quality-purple)!important;border-color:#76539a!important}
+#legend .sw[data-quality="gold"]{background:var(--quality-gold)!important;border-color:#9a7424!important}
+#legend .sw[data-quality="red"]{background:var(--quality-red)!important;border-color:#a5443f!important}
 /* 灰褐胶囊 pill：白字描边 */
 .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;border:1px solid rgba(248,241,223,.55);background:#6b5b49;color:#fdf8ec;white-space:nowrap;box-shadow:inset 0 -1px 2px rgba(0,0,0,.2);text-shadow:0 1px 1px rgba(43,38,34,.4)}
 .pill.gray{background:#8d8375;border-color:rgba(248,241,223,.45)}

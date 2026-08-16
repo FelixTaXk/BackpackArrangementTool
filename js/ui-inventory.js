@@ -41,7 +41,7 @@ function renderInventoryTable(){
       <td class="col-no" data-label="编号"><b>#${it.no}</b></td>
       <td class="col-name" data-label="名称"><span class="shape-name">${escapeHtml(it.name)}</span></td>
       <td class="col-attribute" data-label="属性"><span class="attr-tag" style="border-color:${attr.displayColor};color:${attr.displayColor}">${escapeHtml(attr.name)}</span></td>
-      <td class="col-quality" data-label="品质"><select data-quality-select data-inv-quality data-i="${idx}" data-q="${QUALITY_NAME_TO_ID[it.quality] || ''}" title="品质可修改：同族变体匹配重建（跨族无变体会提示复原）">${qualityOptionsHtml(it.quality, variants)}</select>${it.quality === '红' ? `<select data-star-select data-q="red" data-inv-star data-i="${idx}" title="长老星级：基础属性按星级放大（1星无加成）">${starLevelOptionsHtml(it.starLevel)}</select>` : ''}</td>
+      <td class="col-quality" data-label="品质">${it.quality === '红' ? `<select data-star-select data-q="red" data-inv-star data-i="${idx}" title="长老星级：基础属性按星级放大（1星无加成）">${starLevelOptionsHtml(it.starLevel)}</select>` : `<select data-quality-select data-inv-quality data-i="${idx}" data-q="${QUALITY_NAME_TO_ID[it.quality] || ''}" title="品质可修改：同族变体匹配重建（跨族无变体会提示复原）">${qualityOptionsHtml(it.quality, variants)}</select>`}</td>
       <td class="col-shape" data-label="形状"></td>
       <td class="col-base" data-label="基础属性">${baseStatsLinesHtml(it)}</td>
       <td class="col-bonus" data-label="加成模式">${bonusLinesHtml(it)}</td>

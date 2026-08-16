@@ -33,7 +33,8 @@ function updateTableColumnLayout(){
 }
 
 // 属性圆徽色（仿灵枢宝鉴底部罗盘条；config.js 冻结不改，此处另设主题色）。
-const ATTR_MEDALLION_COLORS = {金:'#d8a531',木:'#6fa76f',水:'#5f9ec7',火:'#c9573f',土:'#a8845c',雷:'#9a7bc0',邪:'#c0392b',体:'#8d8d8d'};
+// 邪圆点用黑色（任务 #49：与页面墨字协调；徽标背景/文字已常态化，仅圆点为邪特化落点）。
+const ATTR_MEDALLION_COLORS = {金:'#d8a531',木:'#6fa76f',水:'#5f9ec7',火:'#c9573f',土:'#a8845c',雷:'#9a7bc0',邪:'#1a1a1a',体:'#8d8d8d'};
 
 function libraryFilterAttribute(){
   const wrap = document.getElementById('libraryFilterAttribute');
