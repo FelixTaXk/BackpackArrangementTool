@@ -4,7 +4,8 @@
 // 2) 包装 renderStats：聚焦会话中冻结渲染显示的是聚焦口径 statTotals（非聚焦加成被置 0），
 //    基函数执行后由本层用 best.placements（uid 反查全局 inventory 取真实 baseStats/bonusRates）
 //    + score-shared 纯函数复算真实全属性数值，回写 #statScore 与 #statBreakdown（聚焦行高亮），
-//    并向 statusBox 追加口径说明。全程 try/catch 兜底，失败不影响冻结渲染；不写其它全局。
+//    并按锚点重组 statusBox 的「摆放清单/百分比加成清单」两段为真实口径（消除同屏口径矛盾），
+//    末尾追加含「优化目标：」的口径说明。全程 try/catch 兜底，失败不影响冻结渲染；不写其它全局。
 'use strict';
 
 (function(){
@@ -31,8 +32,10 @@
   // 复算真实分属性数值并回写展示：
   // - 每 placement 以 uid 反查 inventory 得真实 stats/rates/bonusKind（口径同 solver.js prepareInventoryItems）；
   // - mask/neighborMask 十进制串解析为 lo/hi；相邻对经 scorePairBonusEvents（useBonus 恒真口径）
-  //   累加 statBreakdown → 真实 bonus[]；base[]=Σ真实 stats；total=base+bonus；
-  // - 真实总分=Σvalue+Σbonus，回写 #statScore 与 #statBreakdown（聚焦行 .focus-row），statusBox 追加口径说明。
+  //   累加 statBreakdown → 真实 bonus[]，同时保留真实事件数组 trueEvents；base[]=Σ真实 stats；total=base+bonus；
+  // - 真实总分=Σvalue+Σbonus，回写 #statScore 与 #statBreakdown（聚焦行 .focus-row）；
+  // - statusBox 按「摆放清单：」「百分比加成清单：」两锚点重组为真实口径（同构模板重建行 + eventLine 事件文案），
+  //   末尾追加含「优化目标：」的聚焦口径说明。
   function focusDecorateStats(best){
     const sel = document.getElementById('focusAttr');
     const focus = sel ? sel.value : '';
@@ -53,16 +56,19 @@
         no:p.no, itemName:p.itemName, value:Number(p.value) || 0,
         bonusKind:bonusKind(inv),
         sv:stats, rv:rates,
-        lo:m.lo, hi:m.hi, nbrLo:nb.lo, nbrHi:nb.hi
+        lo:m.lo, hi:m.hi, nbrLo:nb.lo, nbrHi:nb.hi,
+        p, inv // 保留原始引用：供真实摆放清单同构模板重建（baseStatsSummary/bonusDescription 直吃 inv 对象口径）
       });
     }
     const base = new Array(K).fill(0), bonus = new Array(K).fill(0);
     for(const v of views){ for(let k = 0; k < K; k++) base[k] += v.sv[k]; }
+    const trueEvents = []; // 真实加成事件数组（保留而非仅累加数值，供 eventLine 同式渲染）
     for(let i = 0; i < views.length; i++){
       for(let j = i + 1; j < views.length; j++){
         const a = views[i], b = views[j];
         if(!scoreAreAdjacent(a.nbrLo, a.nbrHi, b.lo, b.hi)) continue;
         for(const e of scorePairBonusEvents(a, b)){
+          trueEvents.push(e);
           for(let k = 0; k < K; k++) bonus[k] += (e.statBreakdown && e.statBreakdown[k]) || 0;
         }
       }
@@ -82,7 +88,32 @@
       wrap.innerHTML = `<table class="stat-breakdown"><thead><tr><th>项目</th><th>基础值</th><th>加成值</th><th>合计</th></tr></thead><tbody>${rows || '<tr><td colspan="4">-</td></tr>'}</tbody></table>`;
     }
     const statusBox = document.getElementById('statusBox');
-    if(statusBox) statusBox.textContent += `\n\n加成聚焦：本次优化目标为${statName(focus)}加成最大化（忽略其它属性加成）；上表为真实全属性数值。`;
+    if(statusBox){
+      // 真实摆放清单：逐 placement 用 ui-result.js 同构模板重建；加成描述段直吃 inv 的真实
+      // baseStats/bonusRates 对象口径（与非聚焦时冻结渲染逐字同式）；uid 反查失败时退回 p 自身字段。
+      const trueList = best.placements.map(p=>{
+        const inv = invByUid.get(p.uid);
+        const baseSrc = inv || p;
+        const descSrc = inv || p;
+        return `#${p.no} ${p.itemName}｜${qualityName(p.quality)}｜${p.area}格｜基础 ${baseStatsSummary(baseSrc)}｜${p.customPriority !== null && p.customPriority !== undefined ? `手动邻接优先级 ${p.customPriority}` : '默认邻接规则'}｜${bonusDescription(descSrc)}｜坐标 ${p.cells.map(([r,c])=>`(${r+1},${c+1})`).join(' ')}`;
+      }).join('\n');
+      const trueEventList = trueEvents.length ? trueEvents.map(eventLine).join('\n') : '无有效百分比加成。';
+      // 锚点重组：head + 真实摆放清单 + 真实事件清单 + 原有 suffix（未放入/未参与搜索段）；锚点缺失静默跳过。
+      const text = statusBox.textContent;
+      const listAnchor = '摆放清单：\n', evAnchor = '百分比加成清单：\n';
+      const aIdx = text.indexOf(listAnchor);
+      const eIdx = aIdx >= 0 ? text.indexOf(evAnchor, aIdx) : -1;
+      if(aIdx >= 0 && eIdx >= 0){
+        const head = text.slice(0, aIdx);
+        const tailRaw = text.slice(eIdx + evAnchor.length);
+        let sIdx = tailRaw.indexOf('\n\n本方案未放入：');
+        const sIdx2 = tailRaw.indexOf('\n\n未参与搜索');
+        if(sIdx < 0 || (sIdx2 >= 0 && sIdx2 < sIdx)) sIdx = sIdx2;
+        const suffix = sIdx >= 0 ? tailRaw.slice(sIdx) : '';
+        statusBox.textContent = head + listAnchor + trueList + '\n\n' + evAnchor + trueEventList + suffix;
+      }
+      statusBox.textContent += `\n\n加成聚焦：优化目标：${statName(focus)}加成最大化（忽略其它属性加成）；上表与清单为真实全属性数值。`;
+    }
   }
 
   populateFocusOptions();
