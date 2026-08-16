@@ -19,6 +19,9 @@ const QUALITY_DISPLAY_STYLES = {
 };
 // 数据库中品质为中文名，展示时先映射为内部 id 再取配色；talisman-model 亦复用此映射。
 const QUALITY_NAME_TO_ID = {绿:'green', 蓝:'blue', 紫:'purple', 金:'gold', 红:'red'};
+// 长老星级基础属性加成表（仅红品质法宝适用）：下标 = 星级-1，值 = 基础属性加成率
+// （1星+0% / 2星+60% / 3星+60% / 4星+100% / 5星+150%）；星级数/合法上界/UI 选项数均由 .length 派生（表驱动）。
+const STAR_LEVEL_BONUS = [0, 0.6, 0.6, 1.0, 1.5];
 function qualityDisplayStyle(q){ return QUALITY_DISPLAY_STYLES[QUALITY_NAME_TO_ID[q] || q] || QUALITY_DISPLAY_STYLES.green; }
 
 // 属性注册表：7 种法宝属性，displayColor 用于界面展示。

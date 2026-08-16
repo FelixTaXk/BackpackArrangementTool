@@ -219,6 +219,15 @@ select[data-quality-select] option[data-q="blue"]{background:var(--quality-blue)
 select[data-quality-select] option[data-q="purple"]{background:var(--quality-purple);color:#2b2622}
 select[data-quality-select] option[data-q="gold"]{background:var(--quality-gold);color:#2b2622}
 select[data-quality-select] option[data-q="red"]{background:var(--quality-red);color:#2b2622}
+/* 长老星级下拉（只加法新规则）：复用红品质底色联动，样式仿 select[data-quality-select][data-q="red"] */
+select[data-star-select]{
+  appearance:none;-webkit-appearance:none;max-width:112px;padding:4px 18px 4px 9px;font-size:12.5px;cursor:pointer;
+  border:1.5px solid var(--ink);border-radius:6px;color:#2b2622;
+  background:
+    linear-gradient(45deg,transparent 44%,var(--cream) 45% 55%,transparent 56%) right 7px center/8px 8px no-repeat,
+    var(--quality-red);
+}
+select[data-star-select] option{background:var(--quality-red);color:#2b2622}
 /* 品质色块徽标：圆角方格 + 2px 墨描边，墨字（五个品质色均为浅中明度，墨字满足 AA 对比度） */
 .quality-chip{
   display:inline-flex;align-items:center;justify-content:center;min-width:2.2em;padding:2px 8px;

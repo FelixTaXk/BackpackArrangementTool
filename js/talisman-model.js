@@ -3,6 +3,15 @@
 
 // 品质中文名→内部 id 映射 QUALITY_NAME_TO_ID 由 config.js 提供（本文件加载顺序在其之后）。
 
+// 长老星级倍率（源层物化唯一放大点）：仅红品质且星级∈1..STAR_LEVEL_BONUS.length 时
+// 返回 1+加成率，否则恒返 1（星级=1/非红时位级恒等，RNG 字节纪律）。
+function starMultiplier(quality, starLevel){
+  if(QUALITY_NAME_TO_ID[quality] !== 'red') return 1;
+  const lv = Math.floor(Number(starLevel));
+  if(!Number.isFinite(lv) || lv < 1 || lv > STAR_LEVEL_BONUS.length) return 1;
+  return 1 + STAR_LEVEL_BONUS[lv - 1];
+}
+
 // 清单 / 法宝库记录统一按 talisman id 查库重建；数值全部来自数据库，不允许自定义。
 function normalizeItemRecord(item){
   const rec = item && typeof item === 'object' ? item : {};
@@ -14,6 +23,19 @@ function normalizeItemRecord(item){
   }else{
     customPriority = Math.max(1, Math.min(99, Math.floor(Number(customPriority))));
   }
+  // 长老星级：仅红品质接受 1..N（N 由 STAR_LEVEL_BONUS.length 派生），非法/缺失回退 1；非红恒为 null。
+  let starLevel = null;
+  if(QUALITY_NAME_TO_ID[def.quality] === 'red'){
+    const lv = Math.floor(Number(rec.starLevel));
+    starLevel = (Number.isFinite(lv) && lv >= 1 && lv <= STAR_LEVEL_BONUS.length) ? lv : 1;
+  }
+  const starF = starMultiplier(def.quality, starLevel);
+  // 基础属性拷贝后按星级倍率逐项放大（保留 1 位小数，消除 13×1.6=20.799… 浮点噪声）；
+  // starF=1 时不触碰原值（整数位级不变）；bonusRates 不放大。
+  const baseStats = {...def.baseStats};
+  if(starF !== 1){
+    for(const k of Object.keys(baseStats)){ baseStats[k] = Math.round(Number(baseStats[k]) * starF * 10) / 10; }
+  }
   return {
     uid: rec.uid || ('inv-' + Date.now() + '-' + Math.random().toString(16).slice(2)),
     no: Number(rec.no) || 0,
@@ -22,12 +44,13 @@ function normalizeItemRecord(item){
     cells: normalizeCells(def.cells),
     attribute: def.attribute,
     quality: def.quality,
-    baseStats: {...def.baseStats},
+    starLevel,
+    baseStats,
     bonusMode: def.bonusMode,
     bonusRates: {...def.bonusRates},
     customPriority,
-    // 预折算标量（Σ baseStats），供求解器比较与剪枝使用；分项明细见 baseStats。
-    value: Object.values(def.baseStats).reduce((s,v)=>s + Number(v), 0)
+    // 预折算标量（Σ 放大后 baseStats，保持 value=ΣbaseStats 恒等），供求解器比较与剪枝使用；分项明细见 baseStats。
+    value: Object.values(baseStats).reduce((s,v)=>s + Number(v), 0)
   };
 }
 

@@ -1,6 +1,12 @@
 // ui-inventory.js —— 已有法宝清单卡片：清单渲染/格数统计/添加与重编号。加载顺序 8/13，依赖 state、utils、talisman-model。
 'use strict';
 
+// 长老星级下拉选项 HTML（表驱动，文案「N星（无加成/+X%）」）；selectedLv 缺省选 1 星。
+function starLevelOptionsHtml(selectedLv){
+  const sel = Number(selectedLv) || 1;
+  return STAR_LEVEL_BONUS.map((b,i)=>`<option value="${i+1}"${sel === i+1 ? ' selected' : ''}>${i+1}星${b === 0 ? '（无加成）' : `（+${Math.round(b*100)}%）`}</option>`).join('');
+}
+
 function renderInventoryTable(){
   const tbody = document.querySelector('#inventoryTable tbody');
   tbody.innerHTML = '';
@@ -19,7 +25,7 @@ function renderInventoryTable(){
       <td class="col-no" data-label="编号"><b>#${it.no}</b></td>
       <td class="col-name" data-label="名称"><span class="shape-name">${escapeHtml(it.name)}</span></td>
       <td class="col-attribute" data-label="属性"><span class="attr-tag" style="border-color:${attr.displayColor};color:${attr.displayColor}">${escapeHtml(attr.name)}</span></td>
-      <td class="col-quality" data-label="品质"><span class="quality-chip" data-quality="${QUALITY_NAME_TO_ID[it.quality] || ''}">${escapeHtml(qualityName(it.quality))}</span></td>
+      <td class="col-quality" data-label="品质">${it.quality === '红' ? `<select data-star-select data-q="red" data-inv-star data-i="${idx}" title="长老星级：基础属性按星级放大（1星无加成）">${starLevelOptionsHtml(it.starLevel)}</select>` : `<span class="quality-chip" data-quality="${QUALITY_NAME_TO_ID[it.quality] || ''}">${escapeHtml(qualityName(it.quality))}</span>`}</td>
       <td class="col-shape" data-label="形状"></td>
       <td class="col-base" data-label="基础属性">${baseStatsLinesHtml(it)}</td>
       <td class="col-bonus" data-label="加成模式">${bonusLinesHtml(it)}</td>
@@ -35,6 +41,21 @@ function renderInventoryTable(){
       const raw = String(e.target.value || '').trim();
       inventory[i].customPriority = raw === '' ? null : Math.max(1, Math.min(99, Math.floor(Number(raw)||1)));
       lastResult = null;
+      renderResultGrid(null);
+    });
+  });
+  // 红法宝星级行内编辑（仿 customPriority 先例）：以 normalizeItemRecord 重建记录使新星级倍率
+  // 物化到 baseStats/value；必须保留 uid/no（uid 是聚焦装饰层反查键，no 保持编号稳定）。
+  tbody.querySelectorAll('select[data-inv-star]').forEach(sel=>{
+    sel.addEventListener('change', e=>{
+      const i = Number(e.target.dataset.i);
+      const old = inventory[i];
+      if(!old) return;
+      const rec = normalizeItemRecord({id:old.id, uid:old.uid, no:old.no, customPriority:old.customPriority, starLevel:Number(e.target.value)});
+      if(!rec) return;
+      inventory[i] = rec;
+      lastResult = null;
+      renderInventoryTable();
       renderResultGrid(null);
     });
   });
@@ -65,14 +86,16 @@ function renderInventoryCellSummary(){
   balanceEl.textContent=difference===0?'格数刚好':difference>0?`超出 ${difference} 格`:`还差 ${Math.abs(difference)} 格`;
 }
 
-function addToInventory(defIndex){
+function addToInventory(defIndex, starLevel){
   const def = itemDefs[defIndex];
   if(!def) return;
   const rec = normalizeItemRecord({
     uid:'inv-' + Date.now() + '-' + Math.random().toString(16).slice(2),
     no: nextItemNo++,
     id: def.id,
-    customPriority: null
+    customPriority: null,
+    // 长老星级透传（只加法，旧调用不传时红品质回退 1 星、非红 null）；放大由 normalizeItemRecord 源层物化。
+    starLevel: starLevel ?? null
   });
   if(rec) inventory.push(rec);
   renderInventoryTable();

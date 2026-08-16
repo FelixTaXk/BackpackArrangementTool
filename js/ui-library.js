@@ -129,12 +129,15 @@ function renderItemsTable(){
     const area = it.cells.length;
     const attr = ATTRIBUTE_MAP[it.attribute] || {name:it.attribute, displayColor:'#6b7280'};
     const qualityOpts = variants.map(v=>`<option value="${v.idx}" data-q="${QUALITY_NAME_TO_ID[v.it.quality] || ''}"${v === defVariant ? ' selected' : ''}>${escapeHtml(v.it.quality)}</option>`).join('');
+    // 长老星级下拉选项（表驱动，文案「N星（无加成/+X%）」，默认 1 星）；仅红品质行展示。
+    const starOpts = STAR_LEVEL_BONUS.map((b,i)=>`<option value="${i+1}"${i === 0 ? ' selected' : ''}>${i+1}星${b === 0 ? '（无加成）' : `（+${Math.round(b*100)}%）`}</option>`).join('');
+    const defIsRed = it.quality === '红';
     const defQualityId = QUALITY_NAME_TO_ID[it.quality] || '';
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="col-name" data-label="名称"><div class="name-line"><span class="shape-name">${escapeHtml(it.name)}</span><span class="hint">${area} 格</span></div></td>
       <td class="col-attribute" data-label="属性"><span class="attr-tag" style="border-color:${attr.displayColor};color:${attr.displayColor}">${escapeHtml(attr.name)}</span></td>
-      <td class="col-quality" data-label="品质"><select data-quality-select data-q="${defQualityId}">${qualityOpts}</select></td>
+      <td class="col-quality" data-label="品质"><select data-quality-select data-q="${defQualityId}"${defIsRed ? ' hidden' : ''}>${qualityOpts}</select><select data-star-select data-q="red"${defIsRed ? '' : ' hidden'} title="长老星级：基础属性按星级放大（1星无加成）">${starOpts}</select></td>
       <td class="col-shape" data-label="形状预览"></td>
       <td class="col-base" data-label="基础属性"></td>
       <td class="col-bonus" data-label="加成"></td>
@@ -148,6 +151,12 @@ function renderItemsTable(){
       tr.querySelector('.col-bonus').innerHTML = bonusLinesHtml(variant.it);
     };
     fillVariantCells(defVariant);
+    // 品质/星级双下拉显隐：当前变体红→显星级隐品质，非红反之（混合家族兜底）。
+    const syncQualityStarVisibility = variant=>{
+      const isRed = variant.it.quality === '红';
+      tr.querySelector('select[data-quality-select]').hidden = isRed;
+      tr.querySelector('select[data-star-select]').hidden = !isRed;
+    };
     tr.querySelector('select[data-quality-select]').addEventListener('change', e=>{
       const v = variants.find(x=>x.idx === Number(e.target.value));
       if(!v) return;
@@ -155,10 +164,16 @@ function renderItemsTable(){
       // 同步品质色联动：下拉闭合态底色（data-q）跟随当前品质
       const qid = QUALITY_NAME_TO_ID[v.it.quality] || '';
       e.target.dataset.q = qid;
+      syncQualityStarVisibility(v);
     });
-    // 添加时取该行品质下拉当前所选项在 itemDefs 中的下标。
+    // 添加时取该行当前所显控件：红变体读星级下拉值透传 addToInventory，非红照旧。
     tr.querySelector('button[data-add]').addEventListener('click', ()=>{
-      addToInventory(Number(tr.querySelector('select[data-quality-select]').value));
+      const qualitySel = tr.querySelector('select[data-quality-select]');
+      if(qualitySel.hidden){
+        addToInventory(Number(qualitySel.value), Number(tr.querySelector('select[data-star-select]').value));
+      }else{
+        addToInventory(Number(qualitySel.value));
+      }
     });
     tbody.appendChild(tr);
   });

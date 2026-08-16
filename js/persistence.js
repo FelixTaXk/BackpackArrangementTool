@@ -17,8 +17,8 @@ function saveConfig(){
     workerCount:Number(document.getElementById('workerCount').value)||2,
     // 存档绑定数据库版本：读取时比对，防止 id 复用导致同 id 指向不同法宝而不自知。
     dbVersion:(window.TALISMAN_DB && window.TALISMAN_DB.meta && window.TALISMAN_DB.meta.version) ?? null,
-    // 数值全部来自内置数据库，清单只存引用（id + 手动邻接优先级）。
-    inventory:inventory.map(x=>({id:x.id, customPriority:x.customPriority ?? null}))
+    // 数值全部来自内置数据库，清单只存引用（id + 手动邻接优先级 + 红品质长老星级）。
+    inventory:inventory.map(x=>({id:x.id, customPriority:x.customPriority ?? null, starLevel:x.starLevel ?? null}))
   };
   try{
     localStorage.setItem('bagSolverConfig', JSON.stringify(data));
@@ -95,7 +95,8 @@ function loadConfig(){
   nextItemNo = 1;
   const missing = [];
   (Array.isArray(data.inventory) ? data.inventory : []).forEach(rec=>{
-    const item = normalizeItemRecord({id:rec && rec.id, no:nextItemNo, customPriority:rec && rec.customPriority});
+    // 长老星级透传（只加法）：旧存档缺键时红品质回退 1 星（原值）、非红 null，读档行为零变化。
+    const item = normalizeItemRecord({id:rec && rec.id, no:nextItemNo, customPriority:rec && rec.customPriority, starLevel:rec && rec.starLevel});
     if(!item){ if(rec && rec.id) missing.push(String(rec.id)); return; }
     item.uid = 'inv-' + Date.now() + '-' + Math.random().toString(16).slice(2);
     inventory.push(item);
