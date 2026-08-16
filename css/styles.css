@@ -13,6 +13,7 @@
   --attr-huo:#c9573f;   --attr-huo-soft:#f0cfc0;
   --attr-tu:#a8845c;    --attr-tu-soft:#e2d2b6;
   --attr-lei:#9a7bc0;   --attr-lei-soft:#ddd2ea;
+  --attr-xie:#c0392b;   --attr-xie-soft:#241a1d;
   --attr-ti:#8d8d8d;    --attr-ti-soft:#dcd8d0;
   /* 品质色令牌（品质列色块徽标/品质下拉色点联动；文本用墨色保证 AA 对比度） */
   --quality-green:#7db98a; --quality-blue:#6fb1c4; --quality-purple:#b48fd6;
@@ -141,6 +142,12 @@ button.compact{padding:5px 12px;font-size:12px}
 }
 .attr-dot{width:11px;height:11px;border-radius:50%;flex:0 0 auto;border:1px solid rgba(43,38,34,.4);box-shadow:inset 0 -1.5px 2px rgba(0,0,0,.22),inset 0 1px 1px rgba(255,255,255,.4)}
 .attr-medallion.active .attr-dot{border-color:var(--ink)}
+/* 邪属性罗盘圆徽特化（黑底红字游戏风，仅作用域 #libraryFilterAttribute，不影响权重预设钮 #weightPresets） */
+#libraryFilterAttribute .attr-medallion[data-attr-filter="邪"]{background:#1a1216;border-color:#5a2320;color:#d8574a}
+#libraryFilterAttribute .attr-medallion[data-attr-filter="邪"].active{
+  background:#1a1216;color:#ff6b5e;font-weight:700;border-color:var(--attr-xie);
+  box-shadow:0 0 0 2px var(--attr-xie),0 0 0 4px rgba(192,57,43,.35);
+}
 /* 权重预设钮（米色卡片底）：未选中态可见 1px 实线边框 + 墨色文字，仅作用域 #weightPresets，
    不影响法宝库属性罗盘；选中态 .active 保持全局金色高亮不变。 */
 #weightPresets .attr-medallion:not(.active){border:1px solid var(--ink-soft);color:var(--ink-soft);background:var(--cream)}
@@ -187,6 +194,8 @@ button.compact{padding:5px 12px;font-size:12px}
 #resultGrid .cell.item-cell[data-attr="土"]{background:var(--attr-tu-soft)!important}
 #resultGrid .cell.item-cell[data-attr="雷"]{background:var(--attr-lei-soft)!important}
 #resultGrid .cell.item-cell[data-attr="体"]{background:var(--attr-ti-soft)!important}
+/* 邪属性结果格：黑底红字特化（覆盖默认墨字白影） */
+#resultGrid .cell.item-cell[data-attr="邪"]{background:var(--attr-xie-soft)!important;color:#e0877c;text-shadow:0 1px 0 rgba(0,0,0,.6)}
 #spaceGrid .cell{cursor:pointer}
 #spaceGrid .cell:hover{outline:2px solid var(--gold-bright);outline-offset:-2px;z-index:2}
 /* 形状迷你预览：墨色块 */

@@ -8,7 +8,7 @@
 'use strict';
 
 // 属性 id → styles.css 中 --attr-* 令牌后缀（与 CSS 令牌镜像对应）。
-const THEME_ATTR_TOKEN = {金:'jin',木:'mu',水:'shui',火:'huo',土:'tu',雷:'lei',体:'ti'};
+const THEME_ATTR_TOKEN = {金:'jin',木:'mu',水:'shui',火:'huo',土:'tu',雷:'lei',邪:'xie',体:'ti'};
 
 // placement → 属性反查：uid/no 命中当前随身法宝清单（lastResult 恒与清单同步，读档会清空结果），
 // 兜底按 itemName 在 itemDefs 查库（库中名称不跨属性冲突）。查不到则不染色（保留品质内联底色）。

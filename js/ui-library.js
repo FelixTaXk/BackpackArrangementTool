@@ -33,7 +33,7 @@ function updateTableColumnLayout(){
 }
 
 // 属性圆徽色（仿灵枢宝鉴底部罗盘条；config.js 冻结不改，此处另设主题色）。
-const ATTR_MEDALLION_COLORS = {金:'#d8a531',木:'#6fa76f',水:'#5f9ec7',火:'#c9573f',土:'#a8845c',雷:'#9a7bc0',体:'#8d8d8d'};
+const ATTR_MEDALLION_COLORS = {金:'#d8a531',木:'#6fa76f',水:'#5f9ec7',火:'#c9573f',土:'#a8845c',雷:'#9a7bc0',邪:'#c0392b',体:'#8d8d8d'};
 
 function libraryFilterAttribute(){
   const wrap = document.getElementById('libraryFilterAttribute');

@@ -42,9 +42,9 @@ function loadXLSX() {
 const XLSX = loadXLSX();
 
 // ---------- 常量映射 ----------
-const ATTRIBUTES = ['金', '木', '水', '火', '土', '雷', '体'];
+const ATTRIBUTES = ['金', '木', '水', '火', '土', '雷', '邪', '体'];
 const QUALITIES = ['绿', '蓝', '紫', '金', '红'];
-const ATTR_PINYIN = { 金: 'jin', 木: 'mu', 水: 'shui', 火: 'huo', 土: 'tu', 雷: 'lei', 体: 'ti' };
+const ATTR_PINYIN = { 金: 'jin', 木: 'mu', 水: 'shui', 火: 'huo', 土: 'tu', 雷: 'lei', 邪: 'xie', 体: 'ti' };
 const QUALITY_EN = { 绿: 'green', 蓝: 'blue', 紫: 'purple', 金: 'gold', 红: 'red' };
 // 加成部位（Excel 实际值）→ bonusMode
 const MODE_MAP = { '相邻': 'provider', '相邻自身': 'self', '无': 'none' };

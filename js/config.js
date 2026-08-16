@@ -24,7 +24,7 @@ const QUALITY_NAME_TO_ID = {绿:'green', 蓝:'blue', 紫:'purple', 金:'gold', �
 const STAR_LEVEL_BONUS = [0, 0.6, 0.6, 1.0, 1.5];
 function qualityDisplayStyle(q){ return QUALITY_DISPLAY_STYLES[QUALITY_NAME_TO_ID[q] || q] || QUALITY_DISPLAY_STYLES.green; }
 
-// 属性注册表：7 种法宝属性，displayColor 用于界面展示。
+// 属性注册表：8 种法宝属性，displayColor 用于界面展示。
 const ATTRIBUTE_OPTIONS = [
   {id:'金', name:'金', displayColor:'#b45309'},
   {id:'木', name:'木', displayColor:'#15803d'},
@@ -32,6 +32,7 @@ const ATTRIBUTE_OPTIONS = [
   {id:'火', name:'火', displayColor:'#b91c1c'},
   {id:'土', name:'土', displayColor:'#a16207'},
   {id:'雷', name:'雷', displayColor:'#7c3aed'},
+  {id:'邪', name:'邪', displayColor:'#c0392b'},
   {id:'体', name:'体', displayColor:'#be185d'}
 ];
 const ATTRIBUTE_MAP = Object.fromEntries(ATTRIBUTE_OPTIONS.map(a=>[a.id,a]));
