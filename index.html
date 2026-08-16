@@ -3,14 +3,13 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>乾坤袋·推演台（背包排列优化工具）</title>
+<title>法宝背包排列优化</title>
 <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
 <header>
   <div class="plaque">
-    <h1>乾坤袋·推演台</h1>
-    <span class="header-seal" aria-hidden="true">法<br>宝</span>
+    <h1>法宝背包排列优化</h1>
   </div>
   <p>背包排列优化工具：严格按“完整装入 → 实际总属性 → 手动邻接优先级 → 默认邻接优先级 → 总邻接数量”优化；实际总属性 = 全部法宝各项基础属性之和 + 全部百分比加成之和。</p>
 </header>
@@ -82,7 +81,7 @@
             <div id="legend" class="legend"></div>
           </div>
           <div class="embedded-solver">
-            <h3 class="panel-sub"><span class="flavor">推演设置</span><span class="fn">求解设置</span></h3>
+            <h3>求解设置</h3>
             <div class="row">
               <label>搜索档位
                 <select id="searchMode">
@@ -102,16 +101,16 @@
               <label>最长搜索时间(ms) <input id="timeLimit" type="number" min="100" step="100" value="20000"></label>
             </div>
             <div class="row">
-              <label><input id="useAdjacencyBonus" type="checkbox" checked> 启用共鸣（百分比相邻加成）</label>
+              <label><input id="useAdjacencyBonus" type="checkbox" checked> 启用百分比相邻加成</label>
               <label><input id="parallelSearch" type="checkbox"> 并行搜索</label>
               <label id="workerCountLabel" hidden>Worker 数量 <input id="workerCount" type="number" min="2" max="12" step="1" value="2"><span id="workerCountHint" class="hint"></span></label>
             </div>
             <div class="row">
-              <button id="solveBtn" class="primary"><span class="btn-flavor">推演</span><span class="btn-sub">搜索更优摆放解</span></button>
-              <button id="cancelSolveBtn" class="danger" disabled>停止推演</button>
-              <button id="exportBtn">导出天命笺 JSON</button>
-              <button id="saveBtn">刻录·保存当前配置</button>
-              <button id="loadBtn">唤回·读取配置</button>
+              <button id="solveBtn" class="primary">搜索更优摆放解</button>
+              <button id="cancelSolveBtn" class="danger" disabled>停止计算</button>
+              <button id="exportBtn">导出结果 JSON</button>
+              <button id="saveBtn">保存当前配置</button>
+              <button id="loadBtn">读取配置</button>
             </div>
             <div class="hint">快速档优先在 3 秒内给出可用结果；深度档使用自定义上限继续优化。求解引擎默认为混合 Portfolio（auto 档：经典精确搜索 DFS + 元启发式 SA 并行组合，取各成员最佳结果），也可切换经典精确搜索或元启发式 SA；快速档固定使用经典精确搜索，评分与比较口径完全一致。并行搜索会用多个不同随机起点同时计算并合并最佳结果，速度更快但会增加 CPU 与耗电，默认关闭。达到时间或节点上限不代表已证明全局最优。</div>
           </div>
@@ -127,7 +126,7 @@
           </div>
           <h3>分项统计</h3>
           <div id="statBreakdown" class="stat-breakdown-wrap"><div class="hint">尚未计算。</div></div>
-          <h3>纸卷·状态</h3>
+          <h3>状态</h3>
           <pre id="statusBox">尚未计算。</pre>
         </div>
       </div>

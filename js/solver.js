@@ -230,7 +230,7 @@ function solveAndRender(){
   let focusAttr = (statKeys.indexOf(focusRaw) >= 0) ? focusRaw : '';
   if(window.__FOCUS_OFF__) focusAttr = '';
   // 守卫（仿空间/清单守卫惯例）：加成全 0 时聚焦无意义，未勾选共鸣加成则拦截。
-  if(focusAttr && !(document.getElementById('useAdjacencyBonus') && document.getElementById('useAdjacencyBonus').checked)){ alert('加成聚焦需要勾选“共鸣加成”（百分比相邻加成）。'); return; }
+  if(focusAttr && !(document.getElementById('useAdjacencyBonus') && document.getElementById('useAdjacencyBonus').checked)){ alert('加成聚焦需要勾选“百分比相邻加成”。'); return; }
   // 聚焦有效：非聚焦下标加成率置 0（stats/value 不动）；placements 与 items 共享同一 rates 数组引用，
   // 一次改写全覆盖；仅 prepared 副本数组受影响，inventory 原始对象不受影响。未聚焦时分支不执行。
   if(focusAttr){

@@ -74,7 +74,7 @@ function themeRecolorLegend(best){
 
 // 推演按钮恢复文案兜底：优先使用包装前对 solveBtn 初始 innerHTML 的运行期快照，
 // 快照不可用时退回此硬编码字符串（与 index.html 初始标记一致）。
-const THEME_SOLVE_BTN_FLAVOR_HTML = '<span class="btn-flavor">推演</span><span class="btn-sub">搜索更优摆放解</span>';
+const THEME_SOLVE_BTN_FLAVOR_HTML = '搜索更优摆放解';
 
 (function(){
   // 运行期快照：在包装 setSolverRunning 之前取 solveBtn 初始 innerHTML，避免与 index.html 双份硬编码。
@@ -93,7 +93,7 @@ const THEME_SOLVE_BTN_FLAVOR_HTML = '<span class="btn-flavor">推演</span><span
       baseSetSolverRunning(running);
       const btn = document.getElementById('solveBtn');
       if(!btn) return;
-      btn.innerHTML = running ? '推演 · 正在搜索…' : (themeSolveBtnSnapshot || THEME_SOLVE_BTN_FLAVOR_HTML);
+      btn.innerHTML = running ? '正在搜索…' : (themeSolveBtnSnapshot || THEME_SOLVE_BTN_FLAVOR_HTML);
     };
   }
 })();
