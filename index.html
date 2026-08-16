@@ -106,13 +106,23 @@
               <label id="workerCountLabel" hidden>Worker 数量 <input id="workerCount" type="number" min="2" max="12" step="1" value="2"><span id="workerCountHint" class="hint"></span></label>
             </div>
             <div class="row">
+              <label>属性权重 攻 <input id="weightAtk" type="number" min="0" step="0.1" value="1"></label>
+              <label>防 <input id="weightDef" type="number" min="0" step="0.1" value="1"></label>
+              <label>生命 <input id="weightHp" type="number" min="0" step="0.1" value="1"></label>
+              <span id="weightPresets">
+                <button id="weightPresetOfficial" class="attr-medallion active" data-weights="1,1,1">官方定价</button>
+                <button id="weightPresetAtk" class="attr-medallion" data-weights="3,0,0">纯攻击力</button>
+                <button id="weightPresetTank" class="attr-medallion" data-weights="0,3,3">生存续航</button>
+              </span>
+            </div>
+            <div class="row">
               <button id="solveBtn" class="primary">搜索更优摆放解</button>
               <button id="cancelSolveBtn" class="danger" disabled>停止计算</button>
               <button id="exportBtn">导出结果 JSON</button>
               <button id="saveBtn">保存当前配置</button>
               <button id="loadBtn">读取配置</button>
             </div>
-            <div class="hint">快速档优先在 3 秒内给出可用结果；深度档使用自定义上限继续优化。求解引擎默认为混合 Portfolio（auto 档：经典精确搜索 DFS + 元启发式 SA 并行组合，取各成员最佳结果），也可切换经典精确搜索或元启发式 SA；快速档固定使用经典精确搜索，评分与比较口径完全一致。并行搜索会用多个不同随机起点同时计算并合并最佳结果，速度更快但会增加 CPU 与耗电，默认关闭。达到时间或节点上限不代表已证明全局最优。</div>
+            <div class="hint">快速档优先在 3 秒内给出可用结果；深度档使用自定义上限继续优化。求解引擎默认为混合 Portfolio（auto 档：经典精确搜索 DFS + 元启发式 SA 并行组合，取各成员最佳结果），也可切换经典精确搜索或元启发式 SA；快速档固定使用经典精确搜索，评分与比较口径完全一致。并行搜索会用多个不同随机起点同时计算并合并最佳结果，速度更快但会增加 CPU 与耗电，默认关闭。达到时间或节点上限不代表已证明全局最优。属性权重三项默认全 1（官方定价）与现状一致；权重只作用于基础属性计价，加成按原价，0 按 0.01 保底。</div>
           </div>
         </div>
         <div class="result-summary">

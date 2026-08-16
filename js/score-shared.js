@@ -189,6 +189,32 @@ function scoreMaskToDec(m){
   return String(hi * 4294967296 + lo);
 }
 
+// ----------------------------------------------------------------------------
+// 属性权重（一期线性）：权重只作用于基础属性计价，加成按原价（bonus 项由调用方在外层按原值累加）。
+// ----------------------------------------------------------------------------
+
+// 有效权重：w>0 取 w；w=0/非法保底 0.01。
+function scoreEffectiveWeight(w){
+  return Number.isFinite(w) && w > 0 ? w : 0.01;
+}
+
+// 加权计价合计：Σ max(0, stats_k) × w_k（w>0 取原值；w=0/非法该项归零，即“0 权重属性不计价”），
+// 合计为 0 时按保底权重 0.01 逐项重计（“0 按 0.01 保底”为整体兜底语义，防全零权重计价退化），
+// 求和后一位小数舍入（对齐 talisman-model.js 星级舍入 Math.round(x*10)/10 先例）。
+// stats/weights 非数组防御返回 0。
+function scoreWeightedTotal(stats, weights){
+  if(!Array.isArray(stats) || !Array.isArray(weights)) return 0;
+  let s = 0;
+  for(let k = 0; k < stats.length; k++){
+    const w = weights[k];
+    if(Number.isFinite(w) && w > 0) s += Math.max(0, Number(stats[k]) || 0) * w;
+  }
+  if(s === 0){
+    for(let k = 0; k < stats.length; k++) s += Math.max(0, Number(stats[k]) || 0) * scoreEffectiveWeight(0);
+  }
+  return Math.round(s * 10) / 10;
+}
+
 // 序列化最好结果（对齐旧 serializeBest，键集完全一致；occupied/mask/neighborMask 转十进制字符串）
 function scoreSerializeBest(best, statKeys, statCount){
   return {
@@ -299,6 +325,18 @@ function __SCORE_SELFTEST__(){
   const incomplete = Object.assign(Object.create(null), best5, {complete:false, totalScore: best5.totalScore + 999});
   assert(scoreCompareEvaluationObjects(best5, incomplete) === 1, '比较：complete 优先于 totalScore');
 
+  // 布局 6：属性权重（一期线性）scoreEffectiveWeight / scoreWeightedTotal
+  assert(scoreEffectiveWeight(0) === 0.01, '权重：eff(0)=0.01 保底');
+  assert(scoreEffectiveWeight(3) === 3, '权重：eff(3)=3 原值');
+  assert(scoreWeightedTotal([100,50,10],[3,0,0]) === 300, '权重：w=[3,0,0]→300');
+  assert(scoreWeightedTotal([100,50,10],[0,3,3]) === 180, '权重：w=[0,3,3]→180');
+  assert(scoreWeightedTotal([100,50,10],[0,0,0]) === 1.6, '权重：w=[0,0,0]→1.6（0 按 0.01 保底）');
+  const wtRound = scoreWeightedTotal([13.3,0,0],[3,0,0]);
+  assert(wtRound === 39.9 && String(wtRound) === '39.9', '权重：13.3×3=39.9 精确舍入（非 39.899999… 噪声）');
+  const wtBase = scoreWeightedTotal([319,33,13835],[1,1,1]);
+  assert(wtBase === 14187 && String(wtBase) === '14187', '权重：全 1 与手算 319+33+13835=14187 一致且串一致');
+  assert(scoreWeightedTotal(null,[1,1,1]) === 0 && scoreWeightedTotal([1],'x') === 0, '权重：stats/weights 非数组防御返回 0');
+
   return {pass: failures.length === 0, failures};
 }
 
@@ -316,5 +354,7 @@ if(typeof window !== 'undefined'){
   window.scoreBuildStatTotals = scoreBuildStatTotals;
   window.scoreMaskToDec = scoreMaskToDec;
   window.scoreSerializeBest = scoreSerializeBest;
+  window.scoreEffectiveWeight = scoreEffectiveWeight;
+  window.scoreWeightedTotal = scoreWeightedTotal;
   window.__SCORE_SELFTEST__ = __SCORE_SELFTEST__;
 }

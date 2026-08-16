@@ -11,6 +11,9 @@ function saveConfig(){
     engineMode:document.getElementById('engineMode').value,
     // 加成聚焦为可选字段（只加法）；旧存档缺失时读取侧回退 ''（默认·总收益最大化），schemaVersion 不变
     focusAttr:(document.getElementById('focusAttr') || {}).value || '',
+    // 属性权重（一期线性）：存三 input 的原始字符串数组（0 必须存活，禁止 Number(..)||1 一类归一）；
+    // 旧存档无此键读档行为不变，schemaVersion 不变
+    weightMul:['weightAtk','weightDef','weightHp'].map(id=>(document.getElementById(id) || {}).value ?? ''),
     nodeLimit:Number(document.getElementById('nodeLimit').value)||2500000,
     timeLimit:Number(document.getElementById('timeLimit').value)||20000,
     parallelSearch:document.getElementById('parallelSearch').checked,
@@ -58,6 +61,15 @@ function applySharedSettings(data){
   const focusStatKeys = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id);
   const focusSel = document.getElementById('focusAttr');
   if(focusSel) focusSel.value = focusStatKeys.indexOf(data.focusAttr) >= 0 ? data.focusAttr : '';
+  // 属性权重（一期线性）：老存档无此键（data.weightMul == null）不触碰 DOM，行为不变；
+  // 仅 Array.isArray && length===3 且逐项 Number.isFinite(Number(v)) && Number(v)>=0 才写回，非法值整体忽略保持默认 1。
+  // schemaVersion 不变；程序化赋值不派发 change（先例见上方 searchMode 注释），手工同步 chips 选中态。
+  if(Array.isArray(data.weightMul) && data.weightMul.length === 3 && data.weightMul.every(v=>Number.isFinite(Number(v)) && Number(v) >= 0)){
+    document.getElementById('weightAtk').value = data.weightMul[0];
+    document.getElementById('weightDef').value = data.weightMul[1];
+    document.getElementById('weightHp').value = data.weightMul[2];
+    if(typeof syncWeightPresetChips === 'function') syncWeightPresetChips();
+  }
   document.getElementById('parallelSearch').checked = !!data.parallelSearch;
   document.getElementById('workerCountLabel').hidden = !data.parallelSearch;
   if(Number(data.workerCount) >= 2) document.getElementById('workerCount').value = String(Math.floor(Number(data.workerCount)));

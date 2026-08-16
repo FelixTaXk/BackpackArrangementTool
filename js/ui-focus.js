@@ -113,6 +113,14 @@
         statusBox.textContent = head + listAnchor + trueList + '\n\n' + evAnchor + trueEventList + suffix;
       }
       statusBox.textContent += `\n\n加成聚焦：优化目标：${statName(focus)}加成最大化（忽略其它属性加成）；上表与清单为真实全属性数值。`;
+      // 属性权重口径行（与 solver.js 非聚焦分支同口径，两分支互斥由 solver.js 侧 !focusAttr 守卫）：
+      // 必须在锚点重组之后写入（重组只保留特定 suffix，重组前写入的尾行会被吞掉）。
+      // trueTotal 公式不改：权重激活时 worker 回传的 p.value 已是加权标量，Σv.value+Σbonus 天然正确
+      //（改吃逐属性加权会因舍入分组不同产生 ±0.1 分叉，禁止）。
+      const weightMul = (typeof readWeightMul === 'function') ? readWeightMul() : null;
+      if(weightMul){
+        statusBox.textContent += `\n\n属性权重口径：权重向量 [攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}]；计价公式 total = Σ base_k × w_k + Σ bonus_k（有效权重 w>0 取 w，w=0 保底 0.01）；权重仅作用于基础属性计价，百分比加成按原价计入。`;
+      }
     }
   }
 

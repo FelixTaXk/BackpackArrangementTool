@@ -220,6 +220,25 @@ function compareSolverBest(a,b){
   return 0;
 }
 
+// 属性权重（一期线性）读取闸门（全局函数，ui-focus.js/persistence.js 复用）：
+// - window.__WEIGHTS_OFF__ 为真 → null（仿 __FOCUS_OFF__ 回退闸，强制全 1 语义）；
+// - 三项任一非有限或 <0 → null（非法值整体回退默认）；
+// - 三项精确 ===1 → null（默认 ≡ 现状：闸门整段不执行，原值原样流转，禁止“重算出相同值”路径——
+//   浮点重算会污染 legacy 哈希种子 solver-worker.js L25/L56，改变 RNG 序列）；
+// - 否则返回原始数组 [wAtk, wDef, wHp]。
+function readWeightMul(){
+  if(window.__WEIGHTS_OFF__) return null;
+  const weightMul = [];
+  for(const id of ['weightAtk','weightDef','weightHp']){
+    const el = document.getElementById(id);
+    const v = Number(el ? el.value : NaN);
+    if(!Number.isFinite(v) || v < 0) return null;
+    weightMul.push(v);
+  }
+  if(weightMul[0] === 1 && weightMul[1] === 1 && weightMul[2] === 1) return null;
+  return weightMul;
+}
+
 function solveAndRender(){
   if(solverWorker) return;
   const prepared = prepareInventoryItems();
@@ -236,6 +255,20 @@ function solveAndRender(){
   if(focusAttr){
     const fi = statKeys.indexOf(focusAttr);
     items.forEach(t=>{ t.rates.forEach((_,k)=>{ if(k !== fi) t.rates[k] = 0; }); });
+  }
+  // 属性权重（一期线性）：total = Σ base_k·w_k + Σ bonus_k（权重只作用于基础属性计价，加成按原价）。
+  // RNG 闸门：weightMul 仅 readWeightMul() 非 null（非全 1/非回退/合法）时进入本块；全 1 时整段不执行，
+  // 原值原样流转（禁止浮点重算路径，避免污染 legacy 哈希种子 solver-worker.js L25/L56 改变 RNG 序列）。
+  const weightMul = readWeightMul();
+  if(weightMul){
+    // 同一次循环双层同步改写：placement.value 是独立标量拷贝，不会自动跟随 item.value；
+    // legacy worker baseScore 吃 placement.value，SA 经 serialItems 吃 item.value，两层必须同值；
+    // 禁止对两层分别调用 scoreWeightedTotal（同一标量只算一次）。skipped 项不改（items 仅含 prepared）。
+    items.forEach(t=>{
+      const wv = scoreWeightedTotal(t.stats, weightMul);
+      t.value = wv;
+      for(const p of t.placements) p.value = wv;
+    });
   }
   const {mask:activeMask, count:activeCells} = buildActiveMask();
   if(activeCells===0){ alert('请至少选择一个已解锁空间格。'); return; }
@@ -287,6 +320,7 @@ ${skipped.length>0?'存在单件无法合法放置的物品，将直接搜索最
 自定义邻接优先物品：${manualItems.length} 件
 求解起点：从已有物品清单自动生成
 ${focusAttr ? `优化目标：${statName(focusAttr)}加成最大化（忽略其它属性加成）\n` : ''}
+${weightMul ? `属性权重：攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}（0 按 0.01 保底；仅作用于基础属性计价，加成按原价）\n` : ''}
 状态区会每 500 ms 更新计时；求解器阶段、节点和最好评分在收到新进度时同步更新。
 页面仍可正常操作；需要中止时点击“停止计算”。`;
 
@@ -309,6 +343,8 @@ ${focusAttr ? `优化目标：${statName(focusAttr)}加成最大化（忽略其�
       solverMeta:{fullPackingAttempted:meta.fullPackingAttempted,fullPackingFound:meta.fullPackingFound,fullSearchCutoff:meta.fullSearchCutoff,optimizationCutoff:meta.optimizationCutoff,fallbackCutoff:meta.fallbackCutoff,totalArea:meta.totalArea,totalBase:meta.totalBase,totalItems:meta.totalItems,fullGroupCount:meta.fullGroupCount,detailedGroupCount:meta.detailedGroupCount,assignmentStrategy:meta.assignmentStrategy,singletonDeferredCount:meta.singletonDeferredCount,assignmentChecks:meta.assignmentChecks,workerCount,engine:meta.engine||'dfs'}
     };
     solverWorkers=[]; solverWorker=null; stopSolverStatusHeartbeat(); setSolverRunning(false);
+    // 属性权重键仅权重激活时追加（只加法；默认全 1 时不出现，同 focusAttr 条件追加先例）。
+    if(weightMul) lastResult.settings.weightMul = weightMul;
     renderResultGrid(best);
     renderStats(best,totalNodes,lastResult.elapsed,meta.stopped,activeCells,skipped,lastResult.solverMeta);
     // SA 终态摘要（期 3）：renderStats 冻结不可改，此处条件追加。仅 SA 参与过的会话
@@ -321,6 +357,11 @@ ${focusAttr ? `优化目标：${statName(focusAttr)}加成最大化（忽略其�
       document.getElementById('statusBox').textContent += `\n\n模拟退火（SA）摘要：${saSummary.workerCount} 个 SA Worker 参与${temperingText}
 末次温度：${Number(saSummary.temp ?? 0).toPrecision(4)}，末次接受率：${((Number(saSummary.acceptRate) || 0) * 100).toFixed(1)}%，迭代速率：${((Number(saSummary.itersPerSec) || 0) / 10000).toFixed(1)} 万/秒，重热次数：${Number(saSummary.restarts) || 0}
 算子权重 Top3：${top3}（lnsSmall/lnsBig 默认关闭，权重非零不代表已执行）`;
+    }
+    // 属性权重终态口径行（仅非聚焦分支）：聚焦分支的权重行由 ui-focus.js 在锚点重组后写入，
+    // 两分支互斥不得双写（重组只保留特定 suffix，重组前写入的尾行会被吞掉）。
+    if(weightMul && !focusAttr){
+      document.getElementById('statusBox').textContent += `\n\n属性权重口径：权重向量 [攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}]；计价公式 total = Σ base_k × w_k + Σ bonus_k（有效权重 w>0 取 w，w=0 保底 0.01）；权重仅作用于基础属性计价，百分比加成按原价计入。`;
     }
   };
   solverWorkers.forEach((worker,workerIndex)=>{ worker.onmessage = function(ev){
