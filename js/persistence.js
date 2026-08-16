@@ -9,6 +9,8 @@ function saveConfig(){
     searchMode:document.getElementById('searchMode').value,
     // 求解引擎为可选字段；旧存档缺失时读取侧缺省 legacy，schemaVersion 不变
     engineMode:document.getElementById('engineMode').value,
+    // 加成聚焦为可选字段（只加法）；旧存档缺失时读取侧回退 ''（默认·总收益最大化），schemaVersion 不变
+    focusAttr:(document.getElementById('focusAttr') || {}).value || '',
     nodeLimit:Number(document.getElementById('nodeLimit').value)||2500000,
     timeLimit:Number(document.getElementById('timeLimit').value)||20000,
     parallelSearch:document.getElementById('parallelSearch').checked,
@@ -52,6 +54,10 @@ function applySharedSettings(data){
   // 期 3 决策（拍板：保守）：页面默认档已改 auto（index.html selected + solver.js DOM 缺省），
   // 但老存档缺此字段读档时仍回退 legacy（老用户读档行为不变）；已存值跟随存档。
   document.getElementById('engineMode').value = (data.engineMode === 'hybrid' || data.engineMode === 'auto') ? data.engineMode : 'legacy';
+  // 加成聚焦：须属 bonusStats id 否则回退 ''（老存档无此键行为不变，仿 engineMode 保守先例）。
+  const focusStatKeys = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id);
+  const focusSel = document.getElementById('focusAttr');
+  if(focusSel) focusSel.value = focusStatKeys.indexOf(data.focusAttr) >= 0 ? data.focusAttr : '';
   document.getElementById('parallelSearch').checked = !!data.parallelSearch;
   document.getElementById('workerCountLabel').hidden = !data.parallelSearch;
   if(Number(data.workerCount) >= 2) document.getElementById('workerCount').value = String(Math.floor(Number(data.workerCount)));

@@ -64,6 +64,10 @@ function bindEvents(){
     lastResult = null;
     renderResultGrid(null);
   });
+  document.getElementById('focusAttr').addEventListener('change', ()=>{
+    lastResult = null;
+    renderResultGrid(null);
+  });
   document.getElementById('exportBtn').addEventListener('click', exportResult);
   document.getElementById('saveBtn').addEventListener('click', saveConfig);
   document.getElementById('loadBtn').addEventListener('click', loadConfig);

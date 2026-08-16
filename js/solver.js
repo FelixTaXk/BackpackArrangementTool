@@ -224,6 +224,19 @@ function solveAndRender(){
   if(solverWorker) return;
   const prepared = prepareInventoryItems();
   const {items, skipped, manualItems, manualPriorityLevels} = prepared;
+  // 加成聚焦：非法/空值回退 ''；window.__FOCUS_OFF__ 为真时强制旁路（线上回退闸，同 __ENGINE_LNS_ON__ 风格）。
+  const statKeys = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id);
+  const focusRaw = (document.getElementById('focusAttr') && document.getElementById('focusAttr').value) || '';
+  let focusAttr = (statKeys.indexOf(focusRaw) >= 0) ? focusRaw : '';
+  if(window.__FOCUS_OFF__) focusAttr = '';
+  // 守卫（仿空间/清单守卫惯例）：加成全 0 时聚焦无意义，未勾选共鸣加成则拦截。
+  if(focusAttr && !(document.getElementById('useAdjacencyBonus') && document.getElementById('useAdjacencyBonus').checked)){ alert('加成聚焦需要勾选“共鸣加成”（百分比相邻加成）。'); return; }
+  // 聚焦有效：非聚焦下标加成率置 0（stats/value 不动）；placements 与 items 共享同一 rates 数组引用，
+  // 一次改写全覆盖；仅 prepared 副本数组受影响，inventory 原始对象不受影响。未聚焦时分支不执行。
+  if(focusAttr){
+    const fi = statKeys.indexOf(focusAttr);
+    items.forEach(t=>{ t.rates.forEach((_,k)=>{ if(k !== fi) t.rates[k] = 0; }); });
+  }
   const {mask:activeMask, count:activeCells} = buildActiveMask();
   if(activeCells===0){ alert('请至少选择一个已解锁空间格。'); return; }
   if(inventory.length===0){ alert('请先从法宝库添加已有法宝。'); return; }
@@ -260,6 +273,8 @@ function solveAndRender(){
     requiredTotalBase:totalSearchBase,
     skippedCount:skipped.length
   };
+  // 加成聚焦键仅聚焦非空时追加（只加法；未聚焦时 payload 逐字节不变）。
+  if(focusAttr) workerPayload.focusAttr = focusAttr;
   solverWorkers=engOrchCreateWorkers({engineMode, searchMode, workerCount, payload:workerPayload});
   solverWorker=solverWorkers[0];
   setSolverRunning(true);
@@ -271,7 +286,7 @@ ${skipped.length>0?'存在单件无法合法放置的物品，将直接搜索最
 时间上限：${timeLimit} ms
 自定义邻接优先物品：${manualItems.length} 件
 求解起点：从已有物品清单自动生成
-
+${focusAttr ? `优化目标：${statName(focusAttr)}加成最大化（忽略其它属性加成）\n` : ''}
 状态区会每 500 ms 更新计时；求解器阶段、节点和最好评分在收到新进度时同步更新。
 页面仍可正常操作；需要中止时点击“停止计算”。`;
 
@@ -289,7 +304,7 @@ ${skipped.length>0?'存在单件无法合法放置的物品，将直接搜索最
     lastResult = {
       best, nodes:totalNodes, elapsed:Math.round(performance.now()-wallStarted), stopped:meta.stopped, width:W, height:H, active:active.map(r=>r.slice()),
       inventory:inventory.map(x=>({...x,cells:cloneCells(x.cells)})),
-      settings:{useAdjacencyBonus:useBonus,searchMode,parallelSearch:parallel,workerCount,optimizationOrder:['complete_loading','actual_total_score','manual_priority_neighbors','default_priority_neighbors','total_adjacency_count'],statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>({id:s.id,name:s.name})),manualPriorityRule:'1 is highest; blank uses default rules',assignmentStrategy:'geometry_then_item_assignment'},
+      settings:{useAdjacencyBonus:useBonus,searchMode,parallelSearch:parallel,workerCount,optimizationOrder:['complete_loading','actual_total_score','manual_priority_neighbors','default_priority_neighbors','total_adjacency_count'],statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>({id:s.id,name:s.name})),manualPriorityRule:'1 is highest; blank uses default rules',assignmentStrategy:'geometry_then_item_assignment',focusAttr},
       skipped:skipped.map(x=>({no:x.no,name:x.name,area:x.area,value:x.value})),manualItems,
       solverMeta:{fullPackingAttempted:meta.fullPackingAttempted,fullPackingFound:meta.fullPackingFound,fullSearchCutoff:meta.fullSearchCutoff,optimizationCutoff:meta.optimizationCutoff,fallbackCutoff:meta.fallbackCutoff,totalArea:meta.totalArea,totalBase:meta.totalBase,totalItems:meta.totalItems,fullGroupCount:meta.fullGroupCount,detailedGroupCount:meta.detailedGroupCount,assignmentStrategy:meta.assignmentStrategy,singletonDeferredCount:meta.singletonDeferredCount,assignmentChecks:meta.assignmentChecks,workerCount,engine:meta.engine||'dfs'}
     };

@@ -309,6 +309,11 @@ pre{
 .stat-breakdown th,.stat-breakdown td{padding:4px 8px;border-bottom:1px solid var(--line);text-align:right}
 .stat-breakdown th:first-child,.stat-breakdown td:first-child{text-align:left}
 .stat-breakdown thead th{background:var(--line)}
+/* 加成聚焦行高亮（只加法新规则）：金系软底 + 墨字，消费既有品质色令牌 */
+.stat-breakdown tr.focus-row td{background:var(--paper-deep);color:var(--ink);font-weight:700;box-shadow:inset 0 0 0 1.5px var(--quality-gold)}
+@supports (background:color-mix(in srgb, red 50%, blue)){
+  .stat-breakdown tr.focus-row td{background:color-mix(in srgb, var(--quality-gold) 38%, var(--paper-deep))}
+}
 .stat-breakdown-wrap{margin-bottom:6px}
 .space-body{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:start}
 .space-controls{min-width:0}
