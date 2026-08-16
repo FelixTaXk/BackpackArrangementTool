@@ -195,7 +195,7 @@ button.compact{padding:5px 12px;font-size:12px}
 #resultGrid .cell.item-cell[data-attr="雷"]{background:var(--attr-lei-soft)!important}
 #resultGrid .cell.item-cell[data-attr="体"]{background:var(--attr-ti-soft)!important}
 /* 邪属性结果格：黑底红字特化（覆盖默认墨字白影） */
-#resultGrid .cell.item-cell[data-attr="邪"]{background:var(--attr-xie-soft)!important;color:#e0877c;text-shadow:0 1px 0 rgba(0,0,0,.6)}
+#resultGrid .cell.item-cell[data-attr="邪"]{background:var(--attr-xie-soft)!important;color:#e0877c!important;text-shadow:0 1px 0 rgba(0,0,0,.6)!important}
 #spaceGrid .cell{cursor:pointer}
 #spaceGrid .cell:hover{outline:2px solid var(--gold-bright);outline-offset:-2px;z-index:2}
 /* 形状迷你预览：墨色块 */
