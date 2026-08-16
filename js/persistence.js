@@ -65,9 +65,11 @@ function applySharedSettings(data){
   // 仅 Array.isArray && length===3 且逐项 Number.isFinite(Number(v)) && Number(v)>=0 才写回，非法值整体忽略保持默认 1。
   // schemaVersion 不变；程序化赋值不派发 change（先例见上方 searchMode 注释），手工同步 chips 选中态。
   if(Array.isArray(data.weightMul) && data.weightMul.length === 3 && data.weightMul.every(v=>Number.isFinite(Number(v)) && Number(v) >= 0)){
-    document.getElementById('weightAtk').value = data.weightMul[0];
-    document.getElementById('weightDef').value = data.weightMul[1];
-    document.getElementById('weightHp').value = data.weightMul[2];
+    // 回写归一化为十进制串：校验用 Number(v) 会接受 true/"0x10"/"٣" 等，原样赋给 number input
+    // 会被 HTML 净化为 ''，再被 readWeightMul 判非法；String(Number(v)) 保证校验值与 DOM 值回环一致。
+    document.getElementById('weightAtk').value = String(Number(data.weightMul[0]));
+    document.getElementById('weightDef').value = String(Number(data.weightMul[1]));
+    document.getElementById('weightHp').value = String(Number(data.weightMul[2]));
     if(typeof syncWeightPresetChips === 'function') syncWeightPresetChips();
   }
   document.getElementById('parallelSearch').checked = !!data.parallelSearch;

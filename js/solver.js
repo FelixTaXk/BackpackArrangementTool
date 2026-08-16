@@ -220,9 +220,12 @@ function compareSolverBest(a,b){
   return 0;
 }
 
-// 属性权重（一期线性）读取闸门（全局函数，ui-focus.js/persistence.js 复用）：
+// 属性权重（一期线性）读取闸门（全局函数，ui-focus.js 复用；persistence.js 独立同口径校验
+//（读档时校验存档形状，语义不同））：
 // - window.__WEIGHTS_OFF__ 为真 → null（仿 __FOCUS_OFF__ 回退闸，强制全 1 语义）；
-// - 三项任一非有限或 <0 → null（非法值整体回退默认）；
+// - 逐项判定：控件缺失、value.trim() 为空串、非有限、<0、或 >1e6 上限，任一成立 → null
+//   （非法值整体回退默认全 1）。清空/空白视为非法回退，非「0」；上限 1e6 防极端权重使
+//   计分溢出 Infinity（比较链 Infinity-Infinity=NaN 退化）；
 // - 三项精确 ===1 → null（默认 ≡ 现状：闸门整段不执行，原值原样流转，禁止“重算出相同值”路径——
 //   浮点重算会污染 legacy 哈希种子 solver-worker.js L25/L56，改变 RNG 序列）；
 // - 否则返回原始数组 [wAtk, wDef, wHp]。
@@ -231,8 +234,9 @@ function readWeightMul(){
   const weightMul = [];
   for(const id of ['weightAtk','weightDef','weightHp']){
     const el = document.getElementById(id);
-    const v = Number(el ? el.value : NaN);
-    if(!Number.isFinite(v) || v < 0) return null;
+    if(!el || String(el.value).trim() === '') return null; // 控件缺失/清空/空白：非法回退，非「0」
+    const v = Number(el.value);
+    if(!Number.isFinite(v) || v < 0 || v > 1e6) return null;
     weightMul.push(v);
   }
   if(weightMul[0] === 1 && weightMul[1] === 1 && weightMul[2] === 1) return null;

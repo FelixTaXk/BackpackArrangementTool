@@ -38,7 +38,9 @@
   //   末尾追加含「优化目标：」的聚焦口径说明。
   function focusDecorateStats(best){
     const sel = document.getElementById('focusAttr');
-    const focus = sel ? sel.value : '';
+    // 与 solver.js solveAndRender 的门控口径对齐：__FOCUS_OFF__ 为真时强制视为非聚焦，
+    // 否则回退闸下 solver.js（focusAttr=''）与 ui-focus 各追加一条权重口径行，造成双写。
+    const focus = (sel && !window.__FOCUS_OFF__) ? sel.value : '';
     if(!focus || !best || !Array.isArray(best.placements)) return;
     const statKeys = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id);
     if(statKeys.indexOf(focus) < 0) return;
@@ -117,7 +119,10 @@
       // 必须在锚点重组之后写入（重组只保留特定 suffix，重组前写入的尾行会被吞掉）。
       // trueTotal 公式不改：权重激活时 worker 回传的 p.value 已是加权标量，Σv.value+Σbonus 天然正确
       //（改吃逐属性加权会因舍入分组不同产生 ±0.1 分叉，禁止）。
-      const weightMul = (typeof readWeightMul === 'function') ? readWeightMul() : null;
+      // 权重口径改吃求解期快照 window.lastResult.settings.weightMul（solver.js 在权重激活时条件追加，
+      // 且 lastResult 在 renderStats 之前赋值）：渲染时实时 readWeightMul() 读 DOM 会与求解中途
+      // 改权重产生竞态，导致口径行与实际计算口径不符；无快照（默认全 1/回退）则不写权重行。
+      const weightMul = (window.lastResult && window.lastResult.settings && window.lastResult.settings.weightMul) || null;
       if(weightMul){
         statusBox.textContent += `\n\n属性权重口径：权重向量 [攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}]；计价公式 total = Σ base_k × w_k + Σ bonus_k（有效权重 w>0 取 w，w=0 保底 0.01）；权重仅作用于基础属性计价，百分比加成按原价计入。`;
       }
