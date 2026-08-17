@@ -74,6 +74,13 @@
   <section>
     <div class="card result-card">
       <h2>4. 自动搜索与当前最佳摆放结果</h2>
+      <div id="stashBar" class="stash-bar" role="group" aria-label="方案暂存">
+        <span class="stash-title">方案暂存</span>
+        <button id="stashSlot1" class="stash-slot" type="button" data-slot="0"><span class="stash-slot-label">暂存1·空</span></button>
+        <button id="stashSlot2" class="stash-slot" type="button" data-slot="1"><span class="stash-slot-label">暂存2·空</span></button>
+        <button id="stashSlot3" class="stash-slot" type="button" data-slot="2"><span class="stash-slot-label">暂存3·空</span></button>
+        <button id="stashBackBtn" type="button" hidden>← 回到当前结果</button>
+      </div>
       <div class="output-wrap">
         <div class="result-main">
           <div class="result-grid-block">
@@ -176,6 +183,7 @@
 <script src="js/solver.js"></script>
 <script src="js/ui-theme.js"></script>
 <script src="js/ui-focus.js"></script>
+<script src="js/ui-stash.js"></script>
 <script src="js/persistence.js"></script>
 <script src="js/app.js"></script>
 </body>

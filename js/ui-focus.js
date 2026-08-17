@@ -124,7 +124,7 @@
       // 改权重产生竞态，导致口径行与实际计算口径不符；无快照（默认全 1/回退）则不写权重行。
       const weightMul = (window.lastResult && window.lastResult.settings && window.lastResult.settings.weightMul) || null;
       if(weightMul){
-        statusBox.textContent += `\n\n属性权重口径：权重向量 [攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}]；计价公式 total = Σ base_k × w_k + Σ bonus_k（有效权重 w>0 取 w，w=0 保底 0.01）；权重仅作用于基础属性计价，百分比加成按原价计入。`;
+        statusBox.textContent += `\n\n属性权重口径：权重向量 [攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}]；搜索目标 total = Σ base_k × w_k + Σ bonus_k × w_k（w=0 属性不计价；基础全零时按 0.01 保底）；展示按真实加成率重算，呈实际总属性。`;
       }
     }
   }

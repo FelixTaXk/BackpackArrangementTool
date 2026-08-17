@@ -154,6 +154,26 @@ button.compact{padding:5px 12px;font-size:12px}
 #weightCustomWrap{display:contents}
 /* 权重 row 与下方按钮 row 间距（复用 10px 间距尺度），消除紧贴。 */
 .weight-row{margin-bottom:10px}
+/* ============ 方案暂存槽位条（任务 #53） ============ */
+/* 与既有胶囊按钮同族（继承 button 底色/描边/圆角）；已存槽加 .filled，重放中槽位 .active 金环高亮。 */
+.stash-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 10px}
+.stash-title{font-family:var(--font-display);letter-spacing:.12em;color:var(--ink)}
+button.stash-slot{position:relative;padding:7px 14px}
+button.stash-slot.filled{font-weight:700;border-color:var(--ink)}
+button.stash-slot.active{
+  box-shadow:0 1.5px 0 rgba(43,38,34,.22),0 0 0 2px var(--gold-bright),0 0 0 4px rgba(216,165,49,.35),inset 0 0 0 1px rgba(248,241,223,.7);
+  font-weight:700;
+}
+.stash-slot-label{pointer-events:none}
+/* 清空小 ×：嵌在已存槽内的独立点击目标（事件委托按 .stash-clear 拦截）。 */
+.stash-clear{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:16px;height:16px;margin-left:8px;pointer-events:auto;
+  border:1px solid var(--cinnabar);border-radius:50%;
+  color:var(--cinnabar);font-size:11px;font-weight:700;line-height:1;
+}
+.stash-clear:hover{background:var(--cinnabar);color:var(--cream)}
+button#stashBackBtn{color:var(--cinnabar);font-weight:700}
 /* ============ 提示/行/表 ============ */
 .hint{color:var(--ink-soft);font-size:12px;margin-top:6px}
 .row{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
