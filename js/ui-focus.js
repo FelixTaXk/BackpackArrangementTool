@@ -33,7 +33,7 @@
   // - 每 placement 以 uid 反查 inventory 得真实 stats/rates/bonusKind（口径同 solver.js prepareInventoryItems）；
   // - mask/neighborMask 十进制串解析为 lo/hi；相邻对经 scorePairBonusEvents（useBonus 恒真口径）
   //   累加 statBreakdown → 真实 bonus[]，同时保留真实事件数组 trueEvents；base[]=Σ真实 stats；total=base+bonus；
-  // - 真实总分=Σvalue+Σbonus，回写 #statScore 与 #statBreakdown（聚焦行 .focus-row）；
+  // - 真实总分=ΣtrueBase+ΣtrueBonus（任务 #62：基础部分直吃真实基础，不吃可能加权的 p.value），回写 #statScore 与 #statBreakdown（聚焦行 .focus-row）；
   // - statusBox 按「摆放清单：」「百分比加成清单：」两锚点重组为真实口径（同构模板重建行 + eventLine 事件文案），
   //   末尾追加含「优化目标：」的聚焦口径说明。
   function focusDecorateStats(best){
@@ -75,9 +75,12 @@
         }
       }
     }
+    // 真实总分口径（任务 #62）：基础部分改吃真实基础 ΣtrueBase（不再吃 v.value——权重激活时
+    // 它是加权标量，会使「聚焦+权重」组合横幅含加权基础），加成部分保持既有聚焦展示语义
+    // （真实加成率重算值不变）。与 solver.js withTrueStatsForDisplay 同一真实总属性口径：
+    // 实际总属性 = Σ真实基础 + Σ真实加成；不引入新舍入（同一多重集换序求和，仅浮点 ulp 差）。
     let trueTotal = 0;
-    for(const v of views) trueTotal += v.value;
-    for(let k = 0; k < K; k++) trueTotal += bonus[k];
+    for(let k = 0; k < K; k++) trueTotal += base[k] + bonus[k];
     // 回写总分横幅与分项统计表（表结构同 ui-result.js renderStats，聚焦行加 .focus-row）。
     const scoreEl = document.getElementById('statScore');
     if(scoreEl) scoreEl.textContent = formatNum(trueTotal);
@@ -117,14 +120,14 @@
       statusBox.textContent += `\n\n加成聚焦：优化目标：${statName(focus)}加成最大化（忽略其它属性加成）；上表与清单为真实全属性数值。`;
       // 属性权重口径行（与 solver.js 非聚焦分支同口径，两分支互斥由 solver.js 侧 !focusAttr 守卫）：
       // 必须在锚点重组之后写入（重组只保留特定 suffix，重组前写入的尾行会被吞掉）。
-      // trueTotal 公式不改：权重激活时 worker 回传的 p.value 已是加权标量，Σv.value+Σbonus 天然正确
-      //（改吃逐属性加权会因舍入分组不同产生 ±0.1 分叉，禁止）。
-      // 权重口径改吃求解期快照 window.lastResult.settings.weightMul（solver.js 在权重激活时条件追加，
-      // 且 lastResult 在 renderStats 之前赋值）：渲染时实时 readWeightMul() 读 DOM 会与求解中途
-      // 改权重产生竞态，导致口径行与实际计算口径不符；无快照（默认全 1/回退）则不写权重行。
+      // trueTotal 口径（任务 #62）：已改吃 ΣtrueBase + ΣtrueBonus（上方），权重激活时横幅不再
+      // 含加权基础；权重口径改吃求解期快照 window.lastResult.settings.weightMul（solver.js 在权重
+      // 激活时条件追加，且 lastResult 在 renderStats 之前赋值）：渲染时实时 readWeightMul() 读
+      // DOM 会与求解中途改权重产生竞态，导致口径行与实际计算口径不符；无快照（默认全 1/回退）
+      // 则不写权重行。
       const weightMul = (window.lastResult && window.lastResult.settings && window.lastResult.settings.weightMul) || null;
       if(weightMul){
-        statusBox.textContent += `\n\n属性权重口径：权重向量 [攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}]；搜索目标 total = Σ base_k × w_k + Σ bonus_k × w_k（w=0 属性不计价；基础全零时按 0.01 保底）；展示按真实加成率重算，呈实际总属性。`;
+        statusBox.textContent += `\n\n属性权重口径：权重向量 [攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}]；搜索目标 total = Σ base_k × w_k + Σ bonus_k × w_k（w=0 属性不计价；基础全零时按 0.01 保底）；横幅与分项呈实际总属性（Σ真实基础 + Σ真实加成），搜索目标仅用于导向搜索。`;
       }
     }
   }

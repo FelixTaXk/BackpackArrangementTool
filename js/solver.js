@@ -285,16 +285,31 @@ function trueStatsOfBest(best){
   return {trueEvents, trueBonus:bonus, trueBase:base, sumTrueBonus, total:base.map((v,k)=>v + bonus[k])};
 }
 
-// 真实重算展示覆盖（终态就地 / 实时克隆两用）：baseScore 保持加权 Σvalue（与 ui-focus trueTotal
-// 口径一致），bonusScore/statTotals/totalScore/bonusEvents 换真实口径；不引入新舍入。
+// 真实重算展示覆盖（终态就地 / 实时克隆两用，任务 #62 统一真实总属性口径）：展示一律呈
+// 实际总属性 = ΣtrueBase + ΣtrueBonus（官方定价）——baseScore=ΣtrueBase（renderStats statusBox
+// 分解行「基础属性」消费点）、totalScore=ΣtrueBase+ΣtrueBonus（#statScore 横幅与「实际总属性」
+// 行消费点）、bonusScore/statTotals/bonusEvents 换真实口径；不引入新舍入。加权搜索目标口径仅
+// 保留在 statusBox 权重口径行。bonusOn=false（未勾选百分比加成）时会话无加成事件：加成保持
+// worker 0 值不动，仅覆盖基础分项与总分（真实加成重算结果不展示，避免呈现搜索目标未计价项）。
 // 注意：实时路径必须作用于浅拷贝（msg.best 原件仍参与后续 compareSolverBest 比较，口径须保持加权值）。
-function withTrueStatsForDisplay(best){
+function withTrueStatsForDisplay(best, bonusOn){
   const truth = trueStatsOfBest(best);
+  let sumTrueBase = 0;
+  for(let k = 0; k < truth.trueBase.length; k++) sumTrueBase += truth.trueBase[k];
+  if(bonusOn === false){
+    const zero = truth.trueBase.map(()=>0);
+    return {
+      baseScore: sumTrueBase,
+      statTotals: {base: truth.trueBase, bonus: zero, total: truth.trueBase.slice()},
+      totalScore: sumTrueBase
+    };
+  }
   return {
     bonusEvents: truth.trueEvents,
     bonusScore: truth.sumTrueBonus,
+    baseScore: sumTrueBase,
     statTotals: {base:truth.trueBase, bonus:truth.trueBonus, total:truth.total},
-    totalScore: (Number(best.baseScore)||0) + truth.sumTrueBonus
+    totalScore: sumTrueBase + truth.sumTrueBonus
   };
 }
 
@@ -410,7 +425,7 @@ ${skipped.length>0?'存在单件无法合法放置的物品，将直接搜索最
 自定义邻接优先物品：${manualItems.length} 件
 求解起点：从已有物品清单自动生成
 ${focusAttr ? `优化目标：${statName(focusAttr)}加成最大化（忽略其它属性加成）\n` : ''}
-${weightMul ? `属性权重：攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}（搜索目标 total = Σ base_k×w_k + Σ bonus_k×w_k，w=0 属性不计价、基础全零按 0.01 保底；展示按真实加成率重算，呈实际总属性）\n` : ''}
+${weightMul ? `属性权重：攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}（搜索目标 total = Σ base_k×w_k + Σ bonus_k×w_k，w=0 属性不计价、基础全零按 0.01 保底；横幅与分项呈实际总属性 = Σ真实基础 + Σ真实加成，搜索目标仅用于导向搜索）\n` : ''}
 状态区会每 500 ms 更新计时；求解器阶段、节点和最好评分在收到新进度时同步更新。
 页面仍可正常操作；需要中止时点击“停止计算”。`;
 
@@ -428,11 +443,11 @@ ${weightMul ? `属性权重：攻×${weightMul[0]}、防×${weightMul[1]}、生�
     const url=worker._blobUrl; worker.terminate(); if(url) URL.revokeObjectURL(url);
     if(completedWorkers<workerCount) return;
     const best=globalBest, meta=winningMessage;
-    // 属性权重终态真实覆盖：worker 侧加成是 rates 缩放后的 Σ bonus_k×w_k 口径，此处按 inventory
-    // 真实加成率重算为实际总属性（baseScore 保持加权 Σvalue 不动）。比较链已结束，就地覆盖安全；
-    // lastResult 仍在此后一次性赋值（实时指针语义不变）。未勾选百分比加成时无加成事件，
-    // worker 值即真实值，整段不执行。
-    if(weightMul && useBonus) Object.assign(best, withTrueStatsForDisplay(best));
+    // 属性权重终态真实覆盖（任务 #62）：worker 侧基础是加权 Σvalue、加成是 rates 缩放后的
+    // Σ bonus_k×w_k 口径，此处统一覆盖为实际总属性（ΣtrueBase + ΣtrueBonus，横幅/分解行/分项表
+    // 同一口径）。比较链已结束，就地覆盖安全；lastResult 仍在此后一次性赋值（实时指针语义不变）。
+    // 未勾选百分比加成时仅覆盖基础分项与总分（加成恒 0），默认口径 weightMul 为 null 整段不执行。
+    if(weightMul) Object.assign(best, withTrueStatsForDisplay(best, useBonus));
     lastResult = {
       best, nodes:totalNodes, elapsed:Math.round(performance.now()-wallStarted), stopped:meta.stopped, width:W, height:H, active:active.map(r=>r.slice()),
       inventory:inventory.map(x=>({...x,cells:cloneCells(x.cells)})),
@@ -464,7 +479,7 @@ ${weightMul ? `属性权重：攻×${weightMul[0]}、防×${weightMul[1]}、生�
     // 属性权重终态口径行（仅非聚焦分支）：聚焦分支的权重行由 ui-focus.js 在锚点重组后写入，
     // 两分支互斥不得双写（重组只保留特定 suffix，重组前写入的尾行会被吞掉）。
     if(weightMul && !focusAttr){
-      document.getElementById('statusBox').textContent += `\n\n属性权重口径：权重向量 [攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}]；搜索目标 total = Σ base_k × w_k + Σ bonus_k × w_k（w=0 属性不计价；基础全零时按 0.01 保底）；展示按真实加成率重算，呈实际总属性。`;
+      document.getElementById('statusBox').textContent += `\n\n属性权重口径：权重向量 [攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}]；搜索目标 total = Σ base_k × w_k + Σ bonus_k × w_k（w=0 属性不计价；基础全零时按 0.01 保底）；横幅与分项呈实际总属性（Σ真实基础 + Σ真实加成），搜索目标仅用于导向搜索。`;
     }
   };
   solverWorkers.forEach((worker,workerIndex)=>{ worker.onmessage = function(ev){
@@ -484,13 +499,14 @@ ${weightMul ? `属性权重：攻×${weightMul[0]}、防×${weightMul[1]}、生�
         // 实时真实渲染（节流 ≥200ms）：incumbent 晋升即刷新「实际总属性」横幅与分项统计。
         // legacy onmessage 与 SA orchestrator（incumbent-lite→incumbent）两路径在此汇合，单点覆盖。
         // 权重口径：对浅拷贝覆盖真实重算字段（msg.best 原件保持加权口径，继续参与后续比较）；
-        // 默认口径（weightMul null）worker 值即真实值，直接渲染无需重算。renderStats 走现有
+        // 未勾选百分比加成时同走覆盖（仅基础分项），默认口径（weightMul null）worker 值即真实值，
+        // 直接渲染无需重算。renderStats 走现有
         // 装饰链（ui-focus 聚焦重算 / ui-stash 自动退出重放包装，均为既有行为）。终态由
         // finishWorker 兜底覆盖，节流跳过的中间帧不影响最终展示。
         const nowLive=performance.now();
         if(nowLive-lastLiveStatsRender>=200){
           lastLiveStatsRender=nowLive;
-          const shown=(weightMul && useBonus) ? Object.assign({}, msg.best, withTrueStatsForDisplay(msg.best)) : msg.best;
+          const shown=weightMul ? Object.assign({}, msg.best, withTrueStatsForDisplay(msg.best, useBonus)) : msg.best;
           renderStats(shown, totalNodes+(Number(msg.nodes)||0), Number(msg.elapsed)||0, false, activeCells, skipped, {totalArea:msg.totalArea, totalItems:msg.totalItems, fullPackingFound:!!msg.fullPackingFound});
           // 实时路径同口径：摆放清单率文本同样直吃缩放 rates，与终态同一重组函数处理。
           if(weightMul && !focusAttr) rebuildTruePlacementList(shown);
