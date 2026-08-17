@@ -298,6 +298,31 @@ function withTrueStatsForDisplay(best){
   };
 }
 
+// 非聚焦权重会话摆放清单真实口径重组：冻结 ui-result.js renderStats 的摆放清单行直吃
+// placement 自身 rates 数组（worker 缩放值 rates×w），横幅/分项/事件清单已是真实口径而
+// 清单率文本不是（w>1 呈放大率、w=0 条目率文本整段消失）。此处对齐 ui-focus.js 聚焦分支
+// 清单模板（uid 反查 inventory 真实条目，baseStats/bonusRates 对象口径），仅锚点替换
+// 「摆放清单：」段；事件清单段已由 withTrueStatsForDisplay 覆盖为真实 trueEvents，不动。
+// 锚点缺失静默跳过；全程只改 statusBox 文本，不写 best/inventory/lastResult。
+function rebuildTruePlacementList(best){
+  const statusBox = document.getElementById('statusBox');
+  if(!statusBox || !best || !Array.isArray(best.placements)) return;
+  const text = statusBox.textContent;
+  const listAnchor = '摆放清单：\n', evAnchor = '\n\n百分比加成清单：';
+  const aIdx = text.indexOf(listAnchor);
+  const eIdx = aIdx >= 0 ? text.indexOf(evAnchor, aIdx) : -1;
+  if(aIdx < 0 || eIdx < 0) return;
+  const invByUid = new Map((Array.isArray(inventory) ? inventory : []).map(x=>[x.uid, x]));
+  // 同构模板重建（与 ui-focus.js focusDecorateStats trueList 逐字同式）：uid 反查失败退回 p 自身字段。
+  const trueList = best.placements.map(p=>{
+    const inv = invByUid.get(p.uid);
+    const baseSrc = inv || p;
+    const descSrc = inv || p;
+    return `#${p.no} ${p.itemName}｜${qualityName(p.quality)}｜${p.area}格｜基础 ${baseStatsSummary(baseSrc)}｜${p.customPriority !== null && p.customPriority !== undefined ? `手动邻接优先级 ${p.customPriority}` : '默认邻接规则'}｜${bonusDescription(descSrc)}｜坐标 ${p.cells.map(([r,c])=>`(${r+1},${c+1})`).join(' ')}`;
+  }).join('\n') || '未放入任何物品。';
+  statusBox.textContent = text.slice(0, aIdx) + listAnchor + trueList + text.slice(eIdx);
+}
+
 function solveAndRender(){
   if(solverWorker) return;
   const prepared = prepareInventoryItems();
@@ -420,6 +445,11 @@ ${weightMul ? `属性权重：攻×${weightMul[0]}、防×${weightMul[1]}、生�
     if(weightMul) lastResult.settings.weightMul = weightMul;
     renderResultGrid(best);
     renderStats(best,totalNodes,lastResult.elapsed,meta.stopped,activeCells,skipped,lastResult.solverMeta);
+    // 非聚焦权重会话：摆放清单率文本按真实 rates 重组（冻结 renderStats 直吃缩放 rates）。
+    // 聚焦分支由 ui-focus.js 锚点重组覆盖（含权重组合），此处 !focusAttr 守卫两分支互斥；
+    // 默认口径 weightMul 为 null 不执行，statusBox 输出逐字不变。useBonus 未勾选时 rates
+    // 同样已被缩放（无事件但清单率文本仍失真），故不附加 useBonus 条件。
+    if(weightMul && !focusAttr) rebuildTruePlacementList(best);
     // SA 终态摘要（期 3）：renderStats 冻结不可改，此处条件追加。仅 SA 参与过的会话
     // engOrchSaSummary 返回非 null；legacy/fast 会话恒 null，statusBox 输出逐字不变。
     const saSummary = (typeof engOrchSaSummary === 'function') ? engOrchSaSummary() : null;
@@ -462,6 +492,8 @@ ${weightMul ? `属性权重：攻×${weightMul[0]}、防×${weightMul[1]}、生�
           lastLiveStatsRender=nowLive;
           const shown=(weightMul && useBonus) ? Object.assign({}, msg.best, withTrueStatsForDisplay(msg.best)) : msg.best;
           renderStats(shown, totalNodes+(Number(msg.nodes)||0), Number(msg.elapsed)||0, false, activeCells, skipped, {totalArea:msg.totalArea, totalItems:msg.totalItems, fullPackingFound:!!msg.fullPackingFound});
+          // 实时路径同口径：摆放清单率文本同样直吃缩放 rates，与终态同一重组函数处理。
+          if(weightMul && !focusAttr) rebuildTruePlacementList(shown);
         }
       }
       updateSolverStatusFromMessage({
