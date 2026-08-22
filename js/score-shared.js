@@ -8,8 +8,9 @@
 //   2. 热路径禁用 BigInt：位板掩码一律使用双 Uint32 数值对 {lo,hi}（低 32 位 / 高位），
 //      42 位以内的板面（W*H<=42）序列化时用 String(hi*4294967296+lo) 精确转十进制。
 //   3. 评分语义与旧版 js/solver-worker.js 逐字一致：
-//      - provider：提升相邻法宝，bonus = Σ 目标.stats[k] × 源.rates[k]/100
-//      - self：提升自己，bonus = Σ 自身.stats[k] × 自身.rates[k]/100（每相邻一个不同法宝一次）
+//      - 同属性守卫：加成事件只在同属性法宝之间发生（attribute 相等才产生 provider/self 事件）
+//      - provider：提升相邻同属性法宝，bonus = Σ 目标.stats[k] × 源.rates[k]/100
+//      - self：提升自己，bonus = Σ 自身.stats[k] × 自身.rates[k]/100（每相邻一个同属性法宝一次）
 //      - 事件 kind：single_provider / self_neighbor（含 statBreakdown）
 //      - 优先级权重：手动 1e8×max(1,len-i)，默认 1e5×max(1,len-i)
 // ============================================================================
@@ -35,6 +36,7 @@ function scoreViewOf(p){
   return Object.assign(Object.create(null), p, {
     sv: p.sv || cleanVec(p.stats),
     rv: p.rv || cleanVec(p.rates),
+    attribute: p.attribute,
     lo: p.lo !== undefined ? p.lo : (p.mask ? (p.mask.lo|0) : 0),
     hi: p.hi !== undefined ? p.hi : (p.mask ? (p.mask.hi|0) : 0),
     nbrLo: p.nbrLo !== undefined ? p.nbrLo : (p.neighborMask ? (p.neighborMask.lo|0) : 0),
@@ -47,9 +49,11 @@ function scorePairBonusEvents(a, b){
   // 守卫：未携带 sv/rv 的原始几何模板跳过而非崩溃（空数组是合法向量，用 == null 判定）。
   if(a.sv == null || a.rv == null || b.sv == null || b.rv == null) return [];
   if(!scoreAreAdjacent(a.nbrLo, a.nbrHi, b.lo, b.hi)) return [];
+  // 同属性守卫：加成事件只在同属性法宝之间发生（provider 作用于目标/self 触发均要求源与目标同属性；与 legacy pairBonusEvents 逐字对齐）
+  if(a.attribute !== b.attribute) return [];
   const events = [];
   const aStats = a.sv, aRates = a.rv, bStats = b.sv, bRates = b.rv;
-  // provider：提升相邻法宝
+  // provider：提升相邻同属性法宝
   if(a.bonusKind === 'provider'){
     const bonus = scoreSumRatesProduct(bStats, aRates);
     if(bonus > 0) events.push({kind:'single_provider', source:a.no, sourceName:a.itemName, target:b.no, targetName:b.itemName, base:b.value, bonus, statBreakdown:bStats.map((v,k)=>v*aRates[k]/100)});
@@ -58,7 +62,7 @@ function scorePairBonusEvents(a, b){
     const bonus = scoreSumRatesProduct(aStats, bRates);
     if(bonus > 0) events.push({kind:'single_provider', source:b.no, sourceName:b.itemName, target:a.no, targetName:a.itemName, base:a.value, bonus, statBreakdown:aStats.map((v,k)=>v*bRates[k]/100)});
   }
-  // self：提升自己（每相邻一个不同法宝一次）
+  // self：提升自己（每相邻一个同属性法宝一次）
   if(a.bonusKind === 'self'){
     const bonus = scoreSumRatesProduct(aStats, aRates);
     if(bonus > 0) events.push({kind:'self_neighbor', source:a.no, sourceName:a.itemName, target:a.no, targetName:a.itemName, neighbor:b.no, neighborName:b.itemName, base:a.value, bonus, statBreakdown:aStats.map((v,k)=>v*aRates[k]/100)});
@@ -73,6 +77,8 @@ function scorePairBonusEvents(a, b){
 // 无序物品对的潜在加成上限（不做相邻检查，对齐旧 potentialPairBonus）
 function scorePotentialPairBonus(a, b){
   if(a.sv == null || a.rv == null || b.sv == null || b.rv == null) return 0;
+  // 同属性守卫（与 scorePairBonusEvents 一致）：异属性潜在加成为 0，剪枝上界只会更紧
+  if(a.attribute !== b.attribute) return 0;
   let bonus = 0;
   const aStats = a.sv, aRates = a.rv, bStats = b.sv, bRates = b.rv;
   if(a.bonusKind === 'provider') bonus += scoreSumRatesProduct(bStats, aRates);
@@ -336,6 +342,42 @@ function __SCORE_SELFTEST__(){
   const wtBase = scoreWeightedTotal([319,33,13835],[1,1,1]);
   assert(wtBase === 14187 && String(wtBase) === '14187', '权重：全 1 与手算 319+33+13835=14187 一致且串一致');
   assert(scoreWeightedTotal(null,[1,1,1]) === 0 && scoreWeightedTotal([1],'x') === 0, '权重：stats/weights 非数组防御返回 0');
+
+  // 布局 7：同属性守卫——加成事件只在同属性法宝之间发生（provider 与 self 各一组）
+  // P7：provider（属性金），占 bit0，外圈含 bit1/bit2；T7a 同属性金占 bit1；T7b 异属性木占 bit2
+  const p7 = {no:7, itemName:'庚', value:5, area:1, bonusKind:'provider', attribute:'金',
+    stats:[0,0,0], rates:[10,0,0], sv:[0,0,0], rv:[10,0,0],
+    lo:1, hi:0, nbrLo:6, nbrHi:0, mask:{lo:1,hi:0}, neighborMask:{lo:6,hi:0},
+    manualOrder:-1, priorityTier:-1, customPriority:null};
+  const t7a = {no:8, itemName:'辛', value:9, area:1, bonusKind:'none', attribute:'金',
+    stats:[100,0,0], rates:[0,0,0], sv:[100,0,0], rv:[0,0,0],
+    lo:2, hi:0, nbrLo:1, nbrHi:0, mask:{lo:2,hi:0}, neighborMask:{lo:1,hi:0},
+    manualOrder:-1, priorityTier:-1, customPriority:null};
+  const t7b = {no:9, itemName:'壬', value:9, area:1, bonusKind:'none', attribute:'木',
+    stats:[100,0,0], rates:[0,0,0], sv:[100,0,0], rv:[0,0,0],
+    lo:4, hi:0, nbrLo:1, nbrHi:0, mask:{lo:4,hi:0}, neighborMask:{lo:1,hi:0},
+    manualOrder:-1, priorityTier:-1, customPriority:null};
+  const ev7same = scorePairBonusEvents(p7, t7a);
+  assert(ev7same.length === 1 && ev7same[0].kind === 'single_provider' && close(ev7same[0].bonus, 10), '布局7：provider 同属性相邻产生事件（100×10/100=10）');
+  assert(scorePairBonusEvents(p7, t7b).length === 0, '布局7：provider 异属性相邻 0 事件');
+  assert(close(scorePotentialPairBonus(p7, t7a), 10), '布局7：同属性 potential=10');
+  assert(scorePotentialPairBonus(p7, t7b) === 0, '布局7：异属性 potential=0');
+  // self：S7（属性金）占 bit0 外圈 bit1；同属性邻居触发一次，异属性邻居不触发
+  const s7 = {no:10, itemName:'癸', value:6, area:1, bonusKind:'self', attribute:'金',
+    stats:[200,0,0], rates:[5,0,0], sv:[200,0,0], rv:[5,0,0],
+    lo:1, hi:0, nbrLo:2, nbrHi:0, mask:{lo:1,hi:0}, neighborMask:{lo:2,hi:0},
+    manualOrder:-1, priorityTier:-1, customPriority:null};
+  const n7same = {no:11, itemName:'子', value:1, area:1, bonusKind:'none', attribute:'金',
+    stats:[0,0,0], rates:[0,0,0], sv:[0,0,0], rv:[0,0,0],
+    lo:2, hi:0, nbrLo:1, nbrHi:0, mask:{lo:2,hi:0}, neighborMask:{lo:1,hi:0},
+    manualOrder:-1, priorityTier:-1, customPriority:null};
+  const n7diff = {no:12, itemName:'丑', value:1, area:1, bonusKind:'none', attribute:'木',
+    stats:[0,0,0], rates:[0,0,0], sv:[0,0,0], rv:[0,0,0],
+    lo:2, hi:0, nbrLo:1, nbrHi:0, mask:{lo:2,hi:0}, neighborMask:{lo:1,hi:0},
+    manualOrder:-1, priorityTier:-1, customPriority:null};
+  const ev7self = scorePairBonusEvents(s7, n7same);
+  assert(ev7self.length === 1 && ev7self[0].kind === 'self_neighbor' && close(ev7self[0].bonus, 10), '布局7：self 同属性相邻触发一次（200×5/100=10）');
+  assert(scorePairBonusEvents(s7, n7diff).length === 0, '布局7：self 异属性相邻 0 事件');
 
   return {pass: failures.length === 0, failures};
 }

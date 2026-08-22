@@ -137,14 +137,17 @@ function ewBuildNeighborTables(m){
   ewPairBonus = new Float64Array(I * I);
   ewPairManW = new Float64Array(I * I);
   ewPairDefW = new Float64Array(I * I);
-  const tmpA = {sv:null, rv:null, bonusKind:'none'}, tmpB = {sv:null, rv:null, bonusKind:'none'};
+  const tmpA = {sv:null, rv:null, bonusKind:'none', attribute:undefined}, tmpB = {sv:null, rv:null, bonusKind:'none', attribute:undefined};
   const kindName = k => (k === 1 ? 'provider' : k === 2 ? 'self' : 'none');
+  // 同属性守卫喂入：属性字典下标映射回字符串（255=缺失 → undefined），喂给 scorePotentialPairBonus
+  const attrOf = i => (m.itemAttr && m.attributes && m.itemAttr[i] !== 255) ? m.attributes[m.itemAttr[i]] : undefined;
   for(let i = 0; i < I; i++){
     const mwI = m.itemManual[i] >= 0 ? 100000000 * Math.max(1, m.manualCount - m.itemManual[i]) : 0;
     const dwI = (m.itemManual[i] < 0 && m.itemTier[i] >= 0) ? 100000 * Math.max(1, m.defaultTierCount - m.itemTier[i]) : 0;
     tmpA.sv = m.itemStats.subarray(i * K, i * K + K);
     tmpA.rv = m.itemRates.subarray(i * K, i * K + K);
     tmpA.bonusKind = kindName(m.itemKind[i]);
+    tmpA.attribute = attrOf(i);
     for(let j = 0; j < I; j++){
       if(i === j) continue;
       const mwJ = m.itemManual[j] >= 0 ? 100000000 * Math.max(1, m.manualCount - m.itemManual[j]) : 0;
@@ -154,6 +157,7 @@ function ewBuildNeighborTables(m){
       tmpB.sv = m.itemStats.subarray(j * K, j * K + K);
       tmpB.rv = m.itemRates.subarray(j * K, j * K + K);
       tmpB.bonusKind = kindName(m.itemKind[j]);
+      tmpB.attribute = attrOf(j);
       ewPairBonus[i * I + j] = scorePotentialPairBonus(tmpA, tmpB);
     }
   }
@@ -1267,15 +1271,23 @@ function ewRefineSolution(deep){
 function ewFinishPolish(){
   const m = ewModel;
   if(!ewScratchSol) ewScratchSol = new Int32Array(m.I);
-  // 端点 0：当前 best → 深度精化（含阶段三，改进则晋级）
-  ewLoadSolution(new Int32Array(bestSol));
-  ewRefineSolution(true);
+  // polish 专属预算（任务 7）：timeLimit×0.25 钳制在 [500,3000]ms，超预算停止精化保留当前解
+  // （此前 polish 在搜索预算之外无上限执行，是 SA 会话冲破 timeLimit 的主因）。
+  const polishDeadline = performance.now() + Math.min(3000, Math.max(500, (Math.max(100, Number(ewMeta.timeLimit) || 20000)) * 0.25));
+  // 端点 0：当前 best → 深度精化（含阶段三，改进则晋级）。
+  // 预算前置检查：低 timeLimit 下进入 polish 时预算可能已耗尽，跳过端点 0 直接进
+  // trial 循环（循环内同式检查会立即 break）与收尾，保证不超预算（与主线程看门狗闭合）。
+  if(performance.now() < polishDeadline){
+    ewLoadSolution(new Int32Array(bestSol));
+    ewRefineSolution(true);
+  }
   // 端点 1..23：前两轮随机重启贪心（密度序随机抖动 → 多样起点）；其余基于 best
   // 的逃逸扰动重建（在 best 盆地邻域换件组合，针对 bonus 尾部差距）+ 精化；
-  // trial≥8 叠加大扰动接近全盘重建。polish 在 3s 搜索预算之外，端点数不受限。
+  // trial≥8 叠加大扰动接近全盘重建。每轮开工前检查专属预算，超预算立即停止。
   // 注意：ewInitialSolution 末尾会无条件 ewCopyToBest，故每轮先快照 best，
   // 精化后若仍不优于快照则回滚跟踪量（只有真正更优的端点才更新 best）。
   for(let trial = 0; trial < 24; trial++){
+    if(performance.now() >= polishDeadline) break;
     ewScratchSol.set(bestSol);
     const sE = bestEnergy, sC = bestComplete, sB = bestBase, sBo = bestBonus;
     const sMw = bestManW, sDw = bestDefW, sAdj = bestAdj, sIt = bestItems, sAr = bestArea;
@@ -1447,6 +1459,11 @@ function engineWorkerMain(){
       ewRngSeed(Number(ewMeta.seedOffset) || 0);
       ewBuildNeighborTables(m);
       ewInitOps();
+      // 时间预算自 init 起算（任务 7）：初始贪心/标定耗时也计入 timeLimit，避免在 deadline 之外超支
+      started = performance.now();
+      deadline = started + Math.max(100, Number(ewMeta.timeLimit) || 20000);
+      ewNodeLimit = Math.max(1000, Number(ewMeta.nodeLimit) || 2500000);
+      lastProgress = started; lastIncumbent = started - 250; lastSwapReq = started - 50;
       ewInitialSolution();
       const tempIndex = Math.max(0, Number(ewMeta.tempIndex) || 0);
       // SAB 回火直连通道（期 3 增强档）：仅当 init 显式带 SharedArrayBuffer（crossOriginIsolated
@@ -1469,11 +1486,7 @@ function engineWorkerMain(){
       }catch(e){ ewSabActive = false; }
       ewCalibrateT0(tempIndex);
       ewRebuildExpTable();
-      started = performance.now();
-      deadline = started + Math.max(100, Number(ewMeta.timeLimit) || 20000);
-      ewNodeLimit = Math.max(1000, Number(ewMeta.nodeLimit) || 2500000);
       ewLastReheatIter = 0;
-      lastProgress = started; lastIncumbent = started - 250; lastSwapReq = started - 50;
       iters = 0; acceptCount = 0; totalMoves = 0; reheatCount = 0; lastImproveIter = 0;
       ewMidRestart = 0;
       stoppedFlag = false;

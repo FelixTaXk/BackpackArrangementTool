@@ -73,7 +73,7 @@ function bonusKind(it){
   const mode = it && (it.bonusMode || it.bonusKind);
   return mode === 'provider' ? 'provider' : mode === 'self' ? 'self' : 'none';
 }
-function bonusModeName(mode){ return mode === 'provider' ? '提升相邻' : mode === 'self' ? '提升自己' : '无'; }
+function bonusModeName(mode){ return mode === 'provider' ? '提升相邻同属性' : mode === 'self' ? '提升自己' : '无'; }
 function statName(k){
   const s = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).find(x=>x.id === k);
   return s ? s.name : k;
@@ -103,14 +103,14 @@ function bonusRatesSummary(it){
 }
 function bonusControlHtml(it){
   const kind = bonusKind(it);
-  if(kind === 'provider') return `<span class="pill green">提升相邻</span> <span class="hint">${escapeHtml(bonusRatesSummary(it))}</span>`;
+  if(kind === 'provider') return `<span class="pill green">提升相邻同属性</span> <span class="hint">${escapeHtml(bonusRatesSummary(it))}</span>`;
   if(kind === 'self') return `<span class="pill">提升自己</span> <span class="hint">${escapeHtml(bonusRatesSummary(it))}</span>`;
   return '<span class="pill gray">无</span>';
 }
 function bonusDescription(it){
   const kind = bonusKind(it);
-  if(kind === 'provider') return `提升相邻：${bonusRatesSummary(it)}（目标基础值 × 加成率）`;
-  if(kind === 'self') return `提升自己：${bonusRatesSummary(it)}（自身基础值 × 加成率，每相邻一个不同法宝一次）`;
+  if(kind === 'provider') return `提升相邻同属性：${bonusRatesSummary(it)}（同属性目标基础值 × 加成率）`;
+  if(kind === 'self') return `提升自己：${bonusRatesSummary(it)}（自身基础值 × 加成率，每相邻一个同属性法宝一次）`;
   return '无加成属性';
 }
 

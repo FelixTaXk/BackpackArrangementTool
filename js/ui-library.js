@@ -88,7 +88,7 @@ function baseStatsLinesHtml(it){
 // 仅用于法宝库/清单表格；结果页等其他展示仍用 bonusControlHtml/bonusDescription。
 function bonusLinesHtml(it){
   const kind = bonusKind(it);
-  const pill = kind === 'provider' ? '<div><span class="pill green">提升相邻</span></div>'
+  const pill = kind === 'provider' ? '<div><span class="pill green">提升相邻同属性</span></div>'
     : kind === 'self' ? '<div><span class="pill">提升自己</span></div>'
     : '<div><span class="pill gray">无</span></div>';
   const parts = [];

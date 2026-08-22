@@ -279,7 +279,7 @@ function engOrchCanonicalPlacement(p){
     uid: p.uid, no: p.no, itemName: p.itemName, typeName: p.typeName,
     area: p.area, quality: p.quality, value: p.value,
     stats: p.stats, rates: p.rates, sv: p.sv, rv: p.rv,
-    bonusKind: p.bonusKind, priorityTier: p.priorityTier, customPriority: p.customPriority,
+    bonusKind: p.bonusKind, attribute: p.attribute, priorityTier: p.priorityTier, customPriority: p.customPriority,
     manualOrder: p.manualOrder, itemIndex: p.itemIndex,
     geometryGroupIndex: p.geometryGroupIndex ?? null, placementIndex: p.placementIndex
   };
@@ -323,7 +323,8 @@ function engOrchConvertDone(worker, msg){
   };
 }
 
-// 分组计数：键式与旧 geometryGroupKey/detailedGroupKey 逐字一致（mask 十进制串字典序排序）
+// 分组计数：键式与旧 geometryGroupKey/detailedGroupKey 逐字一致（mask 十进制串字典序排序）；
+// 同属性守卫生效后 detailed 签名含 attribute（与 solver-worker.js detailedGroupKey 同步）。
 function engOrchGroupCounts(serialItems){
   const sig = t => `${t.value}|${t.bonusKind}|${(t.stats || []).join(',')}|${(t.rates || []).join(',')}`;
   const fullKeys = new Set(), detailedKeys = new Set();
@@ -331,7 +332,7 @@ function engOrchGroupCounts(serialItems){
     const masks = t.placements.map(p => String(p.mask)).sort().join(',');
     const cp = t.customPriority === null || t.customPriority === undefined ? '' : t.customPriority;
     fullKeys.add([masks, t.area, t.priorityTier, t.manualOrder, cp].join('|'));
-    detailedKeys.add([masks, t.area, t.quality, sig(t), t.priorityTier, t.manualOrder, cp].join('|'));
+    detailedKeys.add([masks, t.area, t.quality, sig(t), t.attribute ?? '', t.priorityTier, t.manualOrder, cp].join('|'));
   }
   return {full: fullKeys.size, detailed: detailedKeys.size};
 }
@@ -374,6 +375,8 @@ function engOrchSaSummary(){
   if(!engOrchState.saLast) return null;
   return {
     workerCount: engOrchState.saWorkers.length,
+    // 任务 7：终态摘要展示完整构成（auto 档 = 1 DFS + N SA；hybrid 档 dfsCount=0）
+    dfsCount: [...engOrchState.workers.values()].filter(r => r.kind === 'dfs').length,
     sabMode: !!engOrchState.sabMode,
     // 期 3 评审修复：透传实际回火态（saCount=1 时 temperingOn=false 从未交换，
     // 展示层据此渲染「未启用回火（单 SA）」而非谎报 broker/SAB）

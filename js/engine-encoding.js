@@ -102,11 +102,14 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
   const itemStats = new Float64Array(I * K);
   const itemRates = new Float64Array(I * K);
   const itemKind = new Uint8Array(I);          // 0=none 1=provider 2=self
+  const itemAttr = new Uint8Array(I);          // 属性字典下标（255=缺失）；同属性守卫用
   const itemManual = new Int16Array(I);        // manualOrder（-1 表示无）
   const itemTier = new Int8Array(I);           // priorityTier（-1 表示无）
   const itemPlOff = new Uint32Array(I);
   const itemPlLen = new Uint16Array(I);
   const itemMeta = [];                         // 原始数据（no/itemName/quality/stats/rates/cells 等），不进 bundle
+  const attrNames = [];                        // 属性字典（随 bundle offsets 下发；解码侧由 itemAttr 下标映射回字符串）
+  const attrIndex = new Map();
 
   let p = 0, cellPtr = 0;
   for(let i = 0; i < I; i++){
@@ -114,6 +117,14 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
     const sv = encStatVec(t.stats, K), rv = encStatVec(t.rates, K);
     itemValue[i] = Number(t.value) || 0;
     itemKind[i] = encKindOf(t.bonusKind);
+    // 属性：加成事件只在同属性法宝之间发生；存字典下标，缺失记 255
+    let attrI = 255;
+    if(t.attribute !== undefined && t.attribute !== null){
+      const key = String(t.attribute);
+      if(attrIndex.has(key)) attrI = attrIndex.get(key);
+      else if(attrNames.length < 255){ attrI = attrNames.length; attrIndex.set(key, attrI); attrNames.push(key); }
+    }
+    itemAttr[i] = attrI;
     itemManual[i] = t.manualOrder >= 0 ? t.manualOrder : -1;
     itemTier[i] = t.priorityTier >= 0 ? t.priorityTier : -1;
     for(let k = 0; k < K; k++){ itemStats[i * K + k] = sv[k]; itemRates[i * K + k] = rv[k]; }
@@ -121,6 +132,7 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
     itemPlLen[i] = t.placements.length;
     itemMeta.push({
       no: t.no, uid: t.uid, itemName: t.name, typeName: t.typeName, quality: t.quality,
+      attribute: t.attribute,
       cells: t.cells.map(c => c.slice()),
       stats: (t.stats || []).slice(), rates: (t.rates || []).slice(),
       customPriority: t.customPriority
@@ -224,20 +236,23 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
   const adjDefW = new Float64Array(E);   // 双向默认优先级加权和
   // 物品对预计算：adjBonus/adjManW/adjDefW 只依赖物品对而非摆放对，
   // 预算 I×I 表后边循环仅查表（避免逐边调用 scorePotentialPairBonus）
-  const tmpA = {sv:null, rv:null, bonusKind:'none'}, tmpB = {sv:null, rv:null, bonusKind:'none'};
+  const tmpA = {sv:null, rv:null, bonusKind:'none', attribute:undefined}, tmpB = {sv:null, rv:null, bonusKind:'none', attribute:undefined};
   const pairBonusTable = new Float64Array(I * I);
   const itemMw = new Float64Array(I), itemDw = new Float64Array(I);
+  const attrOf = i => itemAttr[i] === 255 ? undefined : attrNames[itemAttr[i]];
   for(let i = 0; i < I; i++){
     itemMw[i] = itemManual[i] >= 0 ? 100000000 * Math.max(1, manualCount - itemManual[i]) : 0;
     itemDw[i] = (itemManual[i] < 0 && itemTier[i] >= 0) ? 100000 * Math.max(1, defaultTierCount - itemTier[i]) : 0;
     tmpA.sv = itemStats.subarray(i * K, i * K + K);
     tmpA.rv = itemRates.subarray(i * K, i * K + K);
     tmpA.bonusKind = encKindName(itemKind[i]);
+    tmpA.attribute = attrOf(i);
     for(let j = 0; j < I; j++){
       if(i === j) continue;
       tmpB.sv = itemStats.subarray(j * K, j * K + K);
       tmpB.rv = itemRates.subarray(j * K, j * K + K);
       tmpB.bonusKind = encKindName(itemKind[j]);
+      tmpB.attribute = attrOf(j);
       pairBonusTable[i * I + j] = scorePotentialPairBonus(tmpA, tmpB);
     }
   }
@@ -272,8 +287,8 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
     statKeys: (opts.statKeys || []).slice(),
     activeMask, globalMaxBonus,
     plMask, plNbr, plItem, plArea, plCellsOff, plCellsLen, cellsFlat, plCellsXY,
-    itemValue, itemStats, itemRates, itemKind, itemManual, itemTier, itemPlOff, itemPlLen,
-    itemMeta,
+    itemValue, itemStats, itemRates, itemKind, itemAttr, itemManual, itemTier, itemPlOff, itemPlLen,
+    itemMeta, attributes: attrNames,
     adjOff, adjPeer, adjBonus, adjManW, adjDefW
   };
 }
@@ -285,7 +300,7 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
 function encBundleTables(){
   return [
     'plMask', 'plNbr', 'plItem', 'plArea', 'plCellsOff', 'plCellsLen', 'cellsFlat', 'plCellsXY',
-    'itemValue', 'itemStats', 'itemRates', 'itemKind', 'itemManual', 'itemTier', 'itemPlOff', 'itemPlLen',
+    'itemValue', 'itemStats', 'itemRates', 'itemKind', 'itemAttr', 'itemManual', 'itemTier', 'itemPlOff', 'itemPlLen',
     'adjOff', 'adjPeer', 'adjBonus', 'adjManW', 'adjDefW'
   ];
 }
@@ -312,7 +327,8 @@ function encBuildBundle(model){
     head: 0,
     activeMaskLo: model.activeMask.lo, activeMaskHi: model.activeMask.hi,
     globalMaxBonus: model.globalMaxBonus,
-    statKeys: model.statKeys.slice()
+    statKeys: model.statKeys.slice(),
+    attributes: (model.attributes || []).slice()
   };
   for(const s of segs){
     fullView.set(new Uint8Array(s.arr.buffer, s.arr.byteOffset, s.arr.byteLength), s.start);
@@ -329,12 +345,14 @@ function encDecodeBundle(buffer, offsets){
     manualCount: head[6], defaultTierCount: head[7], useBonus: !!head[8], cellCount: head[9],
     activeMask: {lo: offsets.activeMaskLo, hi: offsets.activeMaskHi},
     globalMaxBonus: offsets.globalMaxBonus,
-    statKeys: offsets.statKeys || []
+    statKeys: offsets.statKeys || [],
+    attributes: offsets.attributes || []
   };
   const TYPES = {
     plMask: Uint32Array, plNbr: Uint32Array, plItem: Uint16Array, plArea: Uint8Array,
     plCellsOff: Uint32Array, plCellsLen: Uint16Array, cellsFlat: Uint8Array, plCellsXY: Uint8Array,
     itemValue: Float64Array, itemStats: Float64Array, itemRates: Float64Array, itemKind: Uint8Array,
+    itemAttr: Uint8Array,
     itemManual: Int16Array, itemTier: Int8Array, itemPlOff: Uint32Array, itemPlLen: Uint16Array,
     adjOff: Uint32Array, adjPeer: Uint32Array, adjBonus: Float64Array, adjManW: Float64Array, adjDefW: Float64Array
   };
@@ -367,7 +385,7 @@ function encRebuildBest(solPlInt32, model, ctx){
     const nbrLo = model.plNbr[p * model.L], nbrHi = model.L > 1 ? model.plNbr[p * model.L + 1] : 0;
     placements.push({
       no: meta.no, uid: meta.uid, itemName: meta.itemName, typeName: meta.typeName,
-      quality: meta.quality, cells, area: model.plArea[p],
+      quality: meta.quality, attribute: meta.attribute, cells, area: model.plArea[p],
       value: model.itemValue[i],
       stats: meta.stats.slice(), rates: meta.rates.slice(),
       sv: Array.from(model.itemStats.subarray(i * K, i * K + K)),
@@ -399,7 +417,7 @@ function encRebuildBest(solPlInt32, model, ctx){
     uid: p.uid, no: p.no, itemName: p.itemName, typeName: p.typeName,
     area: p.area, quality: p.quality, value: p.value,
     stats: p.stats, rates: p.rates, sv: p.sv, rv: p.rv,
-    bonusKind: p.bonusKind, priorityTier: p.priorityTier, customPriority: p.customPriority,
+    bonusKind: p.bonusKind, attribute: p.attribute, priorityTier: p.priorityTier, customPriority: p.customPriority,
     manualOrder: p.manualOrder,
     geometryGroupIndex: p.geometryGroupIndex ?? null
   }));

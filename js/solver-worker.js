@@ -74,9 +74,11 @@ function solverWorkerMain(){
       // 守卫：未 instantiate 的原始几何模板不携带 sv/rv，跳过而非崩溃。
       if(!a.sv || !a.rv || !b.sv || !b.rv) return [];
       if(!areAdjacent(a,b)) return [];
+      // 同属性守卫：加成事件只在同属性法宝之间发生（provider 作用于目标/self 触发均要求源与目标同属性；与 score-shared scorePairBonusEvents 逐字对齐）
+      if(a.attribute !== b.attribute) return [];
       const events = [];
       const aStats=a.sv, aRates=a.rv, bStats=b.sv, bRates=b.rv;
-      // provider：提升相邻法宝，bonus = Σ 目标.stats[k] × 源.rates[k]/100
+      // provider：提升相邻同属性法宝，bonus = Σ 目标.stats[k] × 源.rates[k]/100
       if(a.bonusKind === 'provider'){
         const bonus=sumRatesProduct(bStats,aRates);
         if(bonus>0) events.push({kind:'single_provider', source:a.no, sourceName:a.itemName, target:b.no, targetName:b.itemName, base:b.value, bonus, statBreakdown:bStats.map((v,k)=>v*aRates[k]/100)});
@@ -85,7 +87,7 @@ function solverWorkerMain(){
         const bonus=sumRatesProduct(aStats,bRates);
         if(bonus>0) events.push({kind:'single_provider', source:b.no, sourceName:b.itemName, target:a.no, targetName:a.itemName, base:a.value, bonus, statBreakdown:aStats.map((v,k)=>v*bRates[k]/100)});
       }
-      // self：提升自己，bonus = Σ 自身.stats[k] × 自身.rates[k]/100（每相邻一个不同法宝一次）
+      // self：提升自己，bonus = Σ 自身.stats[k] × 自身.rates[k]/100（每相邻一个同属性法宝一次）
       if(a.bonusKind === 'self'){
         const bonus=sumRatesProduct(aStats,aRates);
         if(bonus>0) events.push({kind:'self_neighbor', source:a.no, sourceName:a.itemName, target:a.no, targetName:a.itemName, neighbor:b.no, neighborName:b.itemName, base:a.value, bonus, statBreakdown:aStats.map((v,k)=>v*aRates[k]/100)});
@@ -107,6 +109,8 @@ function solverWorkerMain(){
     function potentialPairBonus(a,b){
       // 守卫：未 instantiate 的原始几何模板不携带 sv/rv，返回 0 而非崩溃。
       if(!a.sv || !a.rv || !b.sv || !b.rv) return 0;
+      // 同属性守卫（与 pairBonusEvents 一致）：异属性潜在加成为 0，globalMaxBonus 剪枝上界只会更紧
+      if(a.attribute !== b.attribute) return 0;
       let bonus=0;
       const aStats=a.sv, aRates=a.rv, bStats=b.sv, bRates=b.rv;
       if(a.bonusKind==='provider') bonus += sumRatesProduct(bStats,aRates);
@@ -169,6 +173,7 @@ function solverWorkerMain(){
         sv:item.sv || [],
         rv:item.rv || [],
         bonusKind:item.bonusKind,
+        attribute:item.attribute,
         priorityTier:item.priorityTier,
         customPriority:item.customPriority,
         manualOrder:item.manualOrder,
@@ -184,9 +189,10 @@ function solverWorkerMain(){
       return [masks,t.area,t.priorityTier,t.manualOrder,t.customPriority===null?'':t.customPriority].join('|');
     }
     // 无法全部装入时仍需决定取舍，因此部分装入阶段保留原来的完整评分签名。
+    // 同属性守卫生效后，属性不同的物品加成行为不再等价，签名需含 attribute 避免漏解。
     function detailedGroupKey(t){
       const masks = t.placements.map(p=>p.mask.toString()).sort().join(',');
-      return [masks,t.area,t.quality,itemNumericSignature(t),t.priorityTier,t.manualOrder,t.customPriority===null?'':t.customPriority].join('|');
+      return [masks,t.area,t.quality,itemNumericSignature(t),t.attribute ?? '',t.priorityTier,t.manualOrder,t.customPriority===null?'':t.customPriority].join('|');
     }
     function maxRate(t){ return (t.rates||[]).reduce((m,x)=>Math.max(m,Number(x)||0),0); }
     function guideInfluence(t){
@@ -300,7 +306,9 @@ function solverWorkerMain(){
         placements:placements.slice(),occupied,bonusEvents,priorityLinks
       };
     }
-    function scoringSignature(t){ return [itemNumericSignature(t),t.quality].join('|'); }
+    // 分配排列去重签名：同属性守卫生效后，属性不同的物品不再可互换，签名需含 attribute
+    // （不进 itemsHashSeed，RNG 复现性不变）。
+    function scoringSignature(t){ return [itemNumericSignature(t),t.quality,t.attribute ?? ''].join('|'); }
     function uniquePermutations(arr,limit=720){
       const out=[], used=Array(arr.length).fill(false), cur=[];
       const sorted=arr.slice().sort((a,b)=>scoringSignature(a).localeCompare(scoringSignature(b)) || a.no-b.no);
@@ -352,22 +360,25 @@ function solverWorkerMain(){
         if(!groupSlots.has(gi)) groupSlots.set(gi,[]);
         groupSlots.get(gi).push(i);
       });
-      for(let pass=0;pass<3;pass++){
+      // 时间硬约束（任务 7）：超时提前返回当前最优，避免单几何布局的分配搜索冲破 hardDeadline。
+      for(let pass=0;pass<3 && performance.now()<hardDeadline;pass++){
         let changed=false;
         for(const [gi,indices] of groupSlots){
+          if(performance.now()>=hardDeadline) break;
           if(indices.length<2) continue;
           const g=fullGroups[gi];
           let bestLocal=currentEval, bestItems=null;
           if(indices.length<=7){
             const perms=uniquePermutations(g.items,720);
             for(const perm of perms){
+              if(performance.now()>=hardDeadline) break;
               const candidate=current.slice();
               for(let k=0;k<indices.length;k++) candidate[indices[k]]=instantiate(geometryPlacements[indices[k]],perm[k],g);
               const evc=evaluateConcrete(candidate);
               if(compareEvaluationObjects(evc,bestLocal)>0){ bestLocal=evc; bestItems=perm; }
             }
           }else{
-            for(let a=0;a<indices.length;a++) for(let b=a+1;b<indices.length;b++){
+            for(let a=0;a<indices.length && performance.now()<hardDeadline;a++) for(let b=a+1;b<indices.length;b++){
               const candidate=current.slice();
               const ia=indices[a], ib=indices[b];
               const itemA=items[current[ia].itemIndex], itemB=items[current[ib].itemIndex];

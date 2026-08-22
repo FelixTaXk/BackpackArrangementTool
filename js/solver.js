@@ -33,6 +33,7 @@ function prepareInventoryItems(){
       cells: normalizeCells(inv.cells),
       area: inv.cells.length,
       quality: inv.quality,
+      attribute: inv.attribute,
       value: Math.max(0, Number(inv.value)||0),
       // 分项基础值与加成率数组（按 bonusStats 顺序），供求器计算分项加成与 statTotals。
       stats: statIds.map(k=>Math.max(0, Number((inv.baseStats || {})[k])||0)),
@@ -59,7 +60,7 @@ function prepareInventoryItems(){
           if(ok && !placeMap.has(m.toString())){
             placeMap.set(m.toString(), {
               mask:m, cells:abs, uid:base.uid, no:base.no, itemName:base.name, typeName:base.typeName,
-              area:base.area, quality:base.quality, value:base.value, stats:base.stats, rates:base.rates, bonusKind:base.bonusKind, priorityTier:base.priorityTier, customPriority:base.customPriority, manualOrder:-1, itemIndex:-1
+              area:base.area, quality:base.quality, value:base.value, stats:base.stats, rates:base.rates, bonusKind:base.bonusKind, attribute:base.attribute, priorityTier:base.priorityTier, customPriority:base.customPriority, manualOrder:-1, itemIndex:-1
             });
           }
         }
@@ -265,7 +266,7 @@ function trueStatsOfBest(best){
     const stats = statKeys.map(k=>Math.max(0, Number((inv.baseStats || {})[k]) || 0));
     const rates = statKeys.map(k=>Math.max(0, Number((inv.bonusRates || {})[k]) || 0));
     const m = dec2lohi(p.mask), nb = dec2lohi(p.neighborMask);
-    views.push({no:p.no, itemName:p.itemName, value:Number(p.value)||0, bonusKind:bonusKind(inv), sv:stats, rv:rates, lo:m.lo, hi:m.hi, nbrLo:nb.lo, nbrHi:nb.hi});
+    views.push({no:p.no, itemName:p.itemName, value:Number(p.value)||0, bonusKind:bonusKind(inv), attribute:inv.attribute, sv:stats, rv:rates, lo:m.lo, hi:m.hi, nbrLo:nb.lo, nbrHi:nb.hi});
   }
   const base = new Array(K).fill(0), bonus = new Array(K).fill(0);
   for(const v of views){ for(let k = 0; k < K; k++) base[k] += v.sv[k]; }
@@ -390,7 +391,9 @@ function solveAndRender(){
   const useBonus = document.getElementById('useAdjacencyBonus').checked;
   const parallel=document.getElementById('parallelSearch').checked;
   const workerLimit=getParallelWorkerLimit();
-  const workerCount=parallel?Math.max(2,Math.min(workerLimit,Math.floor(Number(document.getElementById('workerCount').value)||2))):1;
+  // 生效值可见（任务 7）：钳制规则本身不变，记录原始请求值供 statusBox 提示实际生效值。
+  const requestedWorkerCount=Math.floor(Number(document.getElementById('workerCount').value)||2);
+  const workerCount=parallel?Math.max(2,Math.min(workerLimit,requestedWorkerCount)):1;
 
   const serialItems = items.map(t=>({
     ...t,
@@ -417,11 +420,16 @@ function solveAndRender(){
   solverWorker=solverWorkers[0];
   setSolverRunning(true);
   startSolverStatusHeartbeat(activeCells, inventory.length);
-  document.getElementById('statusBox').textContent = `正在后台搜索（${searchMode==='fast'?'快速':'深度'}档，${workerCount} 个 Worker）…
+  // 生效值可见（任务 7）：未勾选并行时明确单 Worker；workerCount 被硬件上限钳制时显示实际值；fast 档 timeLimit 截断时显示实际生效值。
+  const workerText=parallel ? (requestedWorkerCount>workerLimit ? `${workerCount} 个 Worker（请求 ${requestedWorkerCount}，受硬件上限钳制，实际 ${workerCount}）` : `${workerCount} 个 Worker`) : '单 Worker 运行（未勾选并行搜索）';
+  const timeText=(searchMode==='fast' && requestedTimeLimit>3000) ? `${timeLimit} ms（快速档截断上限，请求 ${requestedTimeLimit} ms）` : `${timeLimit} ms`;
+  // fast 档 nodeLimit 同样被截断（见上方钳制），仿 timeText 显示生效值与请求值。
+  const nodeText=(searchMode==='fast' && requestedNodeLimit>350000) ? `${nodeLimit.toLocaleString('zh-CN')}（快速档截断上限，请求 ${requestedNodeLimit.toLocaleString('zh-CN')}）` : nodeLimit.toLocaleString('zh-CN');
+  document.getElementById('statusBox').textContent = `正在后台搜索（${searchMode==='fast'?'快速':'深度'}档，${workerText}）…
 物品总占格：${totalSearchArea}，可用空间：${activeCells}
 ${skipped.length>0?'存在单件无法合法放置的物品，将直接搜索最佳可行子集。':(totalSearchArea<=activeCells?'先寻找全部物品的完整摆法，再按实际总属性与邻接顺序优化。':'物品总面积超过空间，将按实际总属性与邻接顺序搜索最佳可行子集。')}
-节点上限：${nodeLimit.toLocaleString('zh-CN')}
-时间上限：${timeLimit} ms
+节点上限：${nodeText}
+时间上限：${timeText}
 自定义邻接优先物品：${manualItems.length} 件
 求解起点：从已有物品清单自动生成
 ${focusAttr ? `优化目标：${statName(focusAttr)}加成最大化（忽略其它属性加成）\n` : ''}
@@ -430,11 +438,17 @@ ${weightMul ? `属性权重：攻×${weightMul[0]}、防×${weightMul[1]}、生�
 页面仍可正常操作；需要中止时点击“停止计算”。`;
 
   let completedWorkers=0, totalNodes=0, globalBest=null, winningMessage=null;
+  const doneWorkers=new Set(); // 已 done 的 Worker 集合（看门狗只对未完成者补发终态）
+  let watchdogTimer=null;
   // incumbent 实时渲染节流：≥200ms 才允许一次 renderStats 全量刷新，防多 Worker 高频晋升 DOM 过载；
   // 终态 finishWorker 不受节流约束，保证最终横幅/分项必为真实口径。
   let lastLiveStatsRender = 0;
   const wallStarted=performance.now();
   const finishWorker=function(worker,msg){
+    // 幂等守卫：看门狗合成终态与在途真实 done 存在竞态（真实 done 已入队时看门狗先到），
+    // 按 worker 引用去重，终态流程只执行一次；正常单次 done 路径行为不变。
+    if(doneWorkers.has(worker)) return;
+    doneWorkers.add(worker);
     completedWorkers++;
     totalNodes+=Number(msg.nodes)||0;
     const comparison=compareSolverBest(msg.best,globalBest);
@@ -442,6 +456,7 @@ ${weightMul ? `属性权重：攻×${weightMul[0]}、防×${weightMul[1]}、生�
     if(comparison>=0 || !winningMessage) winningMessage=msg;
     const url=worker._blobUrl; worker.terminate(); if(url) URL.revokeObjectURL(url);
     if(completedWorkers<workerCount) return;
+    if(watchdogTimer){ clearTimeout(watchdogTimer); watchdogTimer=null; }
     const best=globalBest, meta=winningMessage;
     // 属性权重终态真实覆盖（任务 #62）：worker 侧基础是加权 Σvalue、加成是 rates 缩放后的
     // Σ bonus_k×w_k 口径，此处统一覆盖为实际总属性（ΣtrueBase + ΣtrueBonus，横幅/分解行/分项表
@@ -472,7 +487,9 @@ ${weightMul ? `属性权重：攻×${weightMul[0]}、防×${weightMul[1]}、生�
       const top3 = Array.isArray(saSummary.opTop3) ? saSummary.opTop3.map(o => `${o.name}(${Number(o.w || 0).toFixed(2)})`).join('、') : '-';
       // 期 3 评审修复：回火态三态渲染（SAB 直连 / broker / 未启用），不再对单 SA 谎报回火通道
       const temperingText = saSummary.tempering ? (saSummary.sabMode ? '（SAB 直连回火通道）' : '（主线程 broker 回火）') : '（未启用回火（单 SA））';
-      document.getElementById('statusBox').textContent += `\n\n模拟退火（SA）摘要：${saSummary.workerCount} 个 SA Worker 参与${temperingText}
+      // 任务 7：显示完整构成（auto 档 = 1 DFS + N SA；hybrid 档全 SA）而非仅 SA 数
+      const composeText = saSummary.dfsCount > 0 ? `${saSummary.dfsCount} DFS + ${saSummary.workerCount} SA` : `${saSummary.workerCount} SA`;
+      document.getElementById('statusBox').textContent += `\n\n模拟退火（SA）摘要：${composeText} Worker 参与${temperingText}
 末次温度：${Number(saSummary.temp ?? 0).toPrecision(4)}，末次接受率：${((Number(saSummary.acceptRate) || 0) * 100).toFixed(1)}%，迭代速率：${((Number(saSummary.itersPerSec) || 0) / 10000).toFixed(1)} 万/秒，重热次数：${Number(saSummary.restarts) || 0}
 算子权重 Top3：${top3}（lnsSmall/lnsBig 默认关闭，权重非零不代表已执行）`;
     }
@@ -482,6 +499,35 @@ ${weightMul ? `属性权重：攻×${weightMul[0]}、防×${weightMul[1]}、生�
       document.getElementById('statusBox').textContent += `\n\n属性权重口径：权重向量 [攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}]；搜索目标 total = Σ base_k × w_k + Σ bonus_k × w_k（w=0 属性不计价；基础全零时按 0.01 保底）；横幅与分项呈实际总属性（Σ真实基础 + Σ真实加成），搜索目标仅用于导向搜索。`;
     }
   };
+  // 会话级硬看门狗（任务 7）：会话上限 = timeLimit + polish 预算（与 engine-worker.js
+  // ewFinishPolish 同式：Math.min(3000, Math.max(500, timeLimit*0.25))，两处须同步不得漂移）
+  // + 3000ms 裕量（覆盖消息收尾），保证 T≥100ms 全档位下看门狗 > SA 最坏结束时间。
+  // 到点 terminate 未 done 的 Worker，保留已有
+  // incumbent，走正常终态汇总流程（finishWorker 补齐计数）。会话快照绑定：solverWorkers 在终态/
+  // 取消/新会话会被重新赋值，仅当仍等于本会话数组时才触发，避免误伤后续新会话；用户取消
+  // （cleanupSolverWorker 置 solverWorker=null）后自动失效。
+  const sessionWorkers=solverWorkers;
+  watchdogTimer=setTimeout(function(){
+    if(!solverWorker || solverWorkers!==sessionWorkers) return;
+    // 从未收到任何 incumbent 时构造空解兼兼容后续渲染/真实重算路径（形状同 legacy 初始 best）。
+    const emptyBest={
+      complete:false, baseScore:-1, bonusScore:0, totalScore:-1, area:0, itemCount:0, adjacencyCount:0,
+      manualPriorityVector:new Array(manualPriorityLevels.length).fill(0), defaultPriorityVector:new Array(DEFAULT_TIER_COUNT).fill(0),
+      placements:[], occupied:'0', bonusEvents:[], priorityLinks:[],
+      statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id)
+    };
+    for(const w of solverWorkers.slice()){
+      if(doneWorkers.has(w)) continue;
+      // best 传 null：globalBest 已有 incumbent 时 compareSolverBest(null,·)=-1，不覆盖不降级 winningMessage；
+      // 无 incumbent 时传空解兼兼容终态流程。
+      finishWorker(w, {type:'done', best:globalBest ? null : emptyBest, nodes:0, elapsed:Math.round(performance.now()-wallStarted), stopped:true,
+        fullPackingAttempted:true, fullPackingFound:!!(globalBest && globalBest.complete),
+        fullSearchCutoff:true, optimizationCutoff:false, fallbackCutoff:false,
+        totalArea:totalSearchArea, totalBase:totalSearchBase, totalItems:inventory.length});
+    }
+    document.getElementById('statusBox').textContent += '\n\n达到时间上限提前结束：主线程看门狗已终止未完成 Worker，保留当前最好方案。';
+  }, timeLimit + Math.min(3000, Math.max(500, timeLimit * 0.25)) + 3000);
+
   solverWorkers.forEach((worker,workerIndex)=>{ worker.onmessage = function(ev){
     let msg = ev.data;
     // 新引擎消息接入：进入现有分支前完成契约转换（现有分支逻辑零改动）

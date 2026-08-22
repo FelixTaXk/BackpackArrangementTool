@@ -57,6 +57,7 @@
       views.push({
         no:p.no, itemName:p.itemName, value:Number(p.value) || 0,
         bonusKind:bonusKind(inv),
+        attribute:inv.attribute,
         sv:stats, rv:rates,
         lo:m.lo, hi:m.hi, nbrLo:nb.lo, nbrHi:nb.hi,
         p, inv // 保留原始引用：供真实摆放清单同构模板重建（baseStatsSummary/bonusDescription 直吃 inv 对象口径）
