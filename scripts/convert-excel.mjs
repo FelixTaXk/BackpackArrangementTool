@@ -184,6 +184,9 @@ ATTRIBUTES.forEach((attr, idx) => {
     const name = lastName;
     const errors = [];
 
+    // 写入侧模板 name:'${t.name}' 无转义，含单引号/反斜杠/换行的名称会产出非法 JS，显式拒收
+    if (/['\\\r\n]/.test(name)) errors.push('名称含单引号/反斜杠/换行，无法安全写入产物');
+
     const quality = norm(row[c.quality]);
     if (!QUALITIES.includes(quality)) errors.push(`颜色(品质)非法：「${quality}」`);
     if (seenNames.has(`${name}|${quality}`)) errors.push(`名称+品质重复：${name}(${quality})`);
@@ -275,14 +278,102 @@ for (let i = talismans.length - 1; i >= 0; i--) {
   }
 }
 
-// ---------- id 分配（确定性：拼音属性+品质英文+三位序号，按 (属性,品质) 内出现顺序） ----------
-const seqCounter = new Map();
-for (const t of talismans) {
-  const key = `${t.attribute}|${t.quality}`;
-  const n = (seqCounter.get(key) || 0) + 1;
-  seqCounter.set(key, n);
-  t.id = `${ATTR_PINYIN[t.attribute]}-${QUALITY_EN[t.quality]}-${String(n).padStart(3, '0')}`;
+// ---------- 回读上一版产物（ID 稳定化） ----------
+// 按自然键「名称|属性|品质」复用旧 id，使 xlsx 任意位置插行/删行都不影响已有法宝的 id。
+function loadPrevDb() {
+  const empty = { prevByKey: new Map(), prevIds: new Set(), maxSeqByPrefix: new Map(), prevEntries: [] };
+  if (!existsSync(OUT_PATH)) {
+    console.warn('⚠ 未找到上一版产物 data/talisman-db.js，按首次生成进行顺序编号；若这不是全新仓库，请先恢复该文件再转换，否则 id 可能与既有产物漂移。');
+    return empty; // 首次生成
+  }
+  const text = readFileSync(OUT_PATH, 'utf8');
+  // 条目行格式由本脚本自身输出模板生成，正则解析可靠
+  const re = /\{id:'([^']+)',\s*name:'([^']+)',\s*attribute:'([^']+)',\s*quality:'([^']+)'/g;
+  const prevByKey = new Map();   // 「名称|属性|品质」→ 旧 id
+  const prevIds = new Set();     // 全部旧 id（退役序号永不复用）
+  const maxSeqByPrefix = new Map(); // 「拼音-品质英文」→ 历史最大序号
+  const prevEntries = [];        // {id, name, key}，用于报告「旧库消失」清单
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const [, id, name, attribute, quality] = m;
+    const key = `${name}|${attribute}|${quality}`;
+    prevByKey.set(key, id);
+    prevIds.add(id);
+    prevEntries.push({ id, name, key });
+    const sm = /^([a-z]+-[a-z]+)-(\d{3})$/.exec(id);
+    if (sm) {
+      const seq = Number(sm[2]);
+      if (seq > (maxSeqByPrefix.get(sm[1]) || 0)) maxSeqByPrefix.set(sm[1], seq);
+    }
+  }
+  if (prevEntries.length === 0) {
+    console.error(`⚠ 现有产物 ${OUT_PATH} 存在但解析出 0 条法宝，拒绝静默全量重发 id。`);
+    process.exit(1);
+  }
+  // 产物头部注释由本脚本自身生成（「talismans 共 N 条」），解析条数与声明不符即疑似损坏
+  const countMatch = /talismans 共 (\d+) 条/.exec(text);
+  if (countMatch && prevEntries.length !== Number(countMatch[1])) {
+    console.error(`⚠ 现有产物头部声明 ${countMatch[1]} 条但仅解析出 ${prevEntries.length} 条，疑似文件损坏或格式漂移，中止以防 id 静默重发。`);
+    process.exit(1);
+  } else if (!countMatch) {
+    console.warn('⚠ 现有产物头部未找到「talismans 共 N 条」声明（更古老版本产物），跳过条数交叉校验。');
+  }
+  return { prevByKey, prevIds, maxSeqByPrefix, prevEntries };
 }
+
+// ---------- id 分配（稳定标识：按「名称|属性|品质」复用旧 id；新条目取该组历史最大序号+1） ----------
+const { prevByKey, prevIds, maxSeqByPrefix, prevEntries } = loadPrevDb();
+const newKeys = new Set();   // 本次新库的自然键集合（用于统计 removed）
+const reusedOldIds = new Set();
+const added = [];
+let reused = 0;
+// 第一遍：自然键命中旧库者沿用旧 id
+for (const t of talismans) {
+  const key = `${t.name}|${t.attribute}|${t.quality}`;
+  newKeys.add(key);
+  const oldId = prevByKey.get(key);
+  if (oldId === undefined) continue;
+  if (reusedOldIds.has(oldId)) {
+    console.error(`⚠ 旧 id「${oldId}」被多个新条目命中（自然键：${key}），id 分配中止。请检查旧产物 data/talisman-db.js 是否被手工修改导致同一 id 对应多条记录。`);
+    process.exit(1);
+  }
+  reusedOldIds.add(oldId);
+  t.id = oldId;
+  reused++;
+}
+// 第二遍：未命中者视为新法宝，从该 (属性,品质) 组历史最大序号+1 起分配，跳过已占用序号
+for (const t of talismans) {
+  if (t.id) continue;
+  const prefix = `${ATTR_PINYIN[t.attribute]}-${QUALITY_EN[t.quality]}`;
+  let seq = (maxSeqByPrefix.get(prefix) || 0) + 1;
+  let id;
+  for (;;) {
+    if (seq > 999) {
+      console.error(`⚠ 前缀「${prefix}」序号超过三位数上限 999，拒绝静默截断。`);
+      process.exit(1);
+    }
+    id = `${prefix}-${String(seq).padStart(3, '0')}`;
+    if (!prevIds.has(id)) break; // 跳过已被占用的序号（含本次已分配）
+    seq++;
+  }
+  t.id = id;
+  prevIds.add(id);
+  maxSeqByPrefix.set(prefix, seq);
+  added.push({ id, name: t.name });
+}
+// 全量 id 去重断言
+{
+  const idSet = new Set();
+  for (const t of talismans) {
+    if (idSet.has(t.id)) {
+      console.error(`⚠ id 重复：「${t.id}」（法宝：${t.name}/${t.attribute}/${t.quality}）。`);
+      process.exit(1);
+    }
+    idSet.add(t.id);
+  }
+}
+// 旧库中消失的条目（自然键未出现在新库）
+const removed = prevEntries.filter(e => !newKeys.has(e.key)).map(({ id, name }) => ({ id, name }));
 
 // ---------- 排序：属性分组（金木水火土雷体），组内按出现顺序（稳定排序） ----------
 talismans.sort((a, b) => ATTRIBUTES.indexOf(a.attribute) - ATTRIBUTES.indexOf(b.attribute));
@@ -318,7 +409,8 @@ const output = `// data/talisman-db.js —— 法宝内置数据库（由 script
 // 数据说明：talismans 共 ${talismans.length} 条，按属性分组（金木水火土雷体）；
 // 参与计算的属性项目仅 atk/def/hp（见 bonusStats 注册表），加成率为百分比数值（如 40 表示 40%）；
 // extraStats/extraRates 为 Excel 中不参与计算的留存项目（如 共鸣值/种类/伤害/暴击伤害等），仅供备查。
-// id 规则：拼音属性 + 品质英文 + 三位序号，按每个 (属性,品质) 组合内的出现顺序编号。
+// id 规则：id 为稳定标识，按「名称|属性|品质」匹配上一版产物复用旧 id；新增条目从该 (属性,品质) 组
+// 历史最大序号+1 分配，退役序号永不复用；可在 xlsx 任意位置插行/删行，已有法宝 id 不变。
 window.TALISMAN_DB = {
   meta:{ version:3 },
   attributes:[${ATTRIBUTES.map(a => `'${a}'`).join(',')}],
@@ -344,6 +436,12 @@ if (sheetDiffs.length) {
   for (const d of [...new Set(sheetDiffs)]) console.warn(`  - ${d}`);
 }
 console.log(`法宝总条数：${talismans.length}`);
+console.log(`ID 稳定化：复用旧 id ${reused} 条 / 新增 ${added.length} 条`);
+for (const a of added) console.log(`  + ${a.id} → ${a.name}`);
+if (removed.length) {
+  console.warn(`⚠ 旧库中消失 ${removed.length} 条（对应存档条目读档时将被跳过）：`);
+  for (const r of removed) console.warn(`  - ${r.id}（${r.name}）`);
+}
 console.log('属性 × 品质分布：');
 console.log(`  属性   ${QUALITIES.join('   ')}`);
 for (const a of ATTRIBUTES) {

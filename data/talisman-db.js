@@ -1,9 +1,10 @@
 // data/talisman-db.js —— 法宝内置数据库（由 scripts/convert-excel.mjs 从 法宝属性.xlsx 转换生成）。
 // 必须在 js/config.js 之前加载；config.js 的 validateTalismanDB() 会在启动时逐条校验。
-// 数据说明：talismans 共 358 条，按属性分组（金木水火土雷体）；
+// 数据说明：talismans 共 360 条，按属性分组（金木水火土雷体）；
 // 参与计算的属性项目仅 atk/def/hp（见 bonusStats 注册表），加成率为百分比数值（如 40 表示 40%）；
 // extraStats/extraRates 为 Excel 中不参与计算的留存项目（如 共鸣值/种类/伤害/暴击伤害等），仅供备查。
-// id 规则：拼音属性 + 品质英文 + 三位序号，按每个 (属性,品质) 组合内的出现顺序编号。
+// id 规则：id 为稳定标识，按「名称|属性|品质」匹配上一版产物复用旧 id；新增条目从该 (属性,品质) 组
+// 历史最大序号+1 分配，退役序号永不复用；可在 xlsx 任意位置插行/删行，已有法宝 id 不变。
 window.TALISMAN_DB = {
   meta:{ version:3 },
   attributes:['金','木','水','火','土','雷','邪','体'],
@@ -77,6 +78,8 @@ window.TALISMAN_DB = {
      baseStats:{atk:95, def:15, hp:3040}, bonusMode:'self', bonusRates:{}, extraStats:{'共鸣值':40, '种类':"枪"}, extraRates:{'暴击伤害':15}},
     {id:'jin-red-003', name:'金辉裂穹', attribute:'金', quality:'红', cells:[[0,0],[1,0],[2,0],[3,0]],
      baseStats:{atk:93, def:15, hp:5200}, bonusMode:'none', bonusRates:{}, extraStats:{'共鸣值':56, '种类':"枪"}},
+    {id:'jin-red-010', name:'北斗天罡枪', attribute:'金', quality:'红', cells:[[0,0],[1,0],[2,0],[3,0]],
+     baseStats:{atk:98, def:14, hp:5000}, bonusMode:'none', bonusRates:{}, extraStats:{'共鸣值':56, '种类':"枪"}},
     {id:'jin-green-008', name:'玄金碎甲剑', attribute:'金', quality:'绿', cells:[[0,1],[1,1],[2,0],[2,1]],
      baseStats:{atk:22, def:3, hp:400}, bonusMode:'self', bonusRates:{}, extraStats:{'共鸣值':5, '种类':"剑"}, extraRates:{'伤害':5}},
     {id:'jin-blue-008', name:'玄金碎甲剑', attribute:'金', quality:'蓝', cells:[[0,1],[1,1],[2,0],[2,1]],
@@ -103,6 +106,8 @@ window.TALISMAN_DB = {
      baseStats:{atk:147, def:0, hp:5900}, bonusMode:'self', bonusRates:{atk:40}, extraStats:{'共鸣值':64, '种类':"刀"}},
     {id:'jin-red-008', name:'三尖两刃', attribute:'金', quality:'红', cells:[[0,0],[0,1],[1,0],[2,0],[3,0]],
      baseStats:{atk:135, def:22, hp:5400}, bonusMode:'self', bonusRates:{}, extraStats:{'共鸣值':64, '种类':"枪"}, extraRates:{'暴击伤害':15}},
+    {id:'jin-red-009', name:'如意金箍棒', attribute:'金', quality:'红', cells:[[0,1],[1,1],[2,1],[3,0],[3,1]],
+     baseStats:{atk:140, def:20, hp:5250}, bonusMode:'self', bonusRates:{}, extraStats:{'共鸣值':64, '种类':"枪/斗"}, extraRates:{'暴击伤害':15}},
     // ===== 木 =====
     {id:'mu-green-001', name:'枯荣种', attribute:'木', quality:'绿', cells:[[0,0]],
      baseStats:{atk:0, def:0, hp:412}, bonusMode:'provider', bonusRates:{hp:20}, extraStats:{'共鸣值':2}},

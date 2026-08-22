@@ -3,3 +3,4 @@ debug.log
 *.tmp
 scripts/exp/
 .vercel-tmp/
+~$*.xlsx
