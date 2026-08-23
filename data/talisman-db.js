@@ -102,7 +102,7 @@ window.TALISMAN_DB = {
      baseStats:{atk:109, def:0, hp:5150}, bonusMode:'none', bonusRates:{}, extraStats:{'共鸣值':56, '种类':"刀"}},
     {id:'jin-red-006', name:'龙渊七星', attribute:'金', quality:'红', cells:[[0,0],[0,1],[1,0],[1,1],[2,0]],
      baseStats:{atk:116, def:19, hp:6500}, bonusMode:'self', bonusRates:{}, extraStats:{'共鸣值':64, '种类':"剑"}, extraRates:{'伤害':5}},
-    {id:'jin-red-007', name:'金锋无影', attribute:'金', quality:'红', cells:[[0,0],[1,0],[1,1],[2,0],[2,1]],
+    {id:'jin-red-007', name:'金锋无影', attribute:'金', quality:'红', cells:[[0,1],[1,0],[1,1],[2,0],[2,1]],
      baseStats:{atk:147, def:0, hp:5900}, bonusMode:'self', bonusRates:{atk:40}, extraStats:{'共鸣值':64, '种类':"刀"}},
     {id:'jin-red-008', name:'三尖两刃', attribute:'金', quality:'红', cells:[[0,0],[0,1],[1,0],[2,0],[3,0]],
      baseStats:{atk:135, def:22, hp:5400}, bonusMode:'self', bonusRates:{}, extraStats:{'共鸣值':64, '种类':"枪"}, extraRates:{'暴击伤害':15}},
