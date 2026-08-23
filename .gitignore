@@ -5,3 +5,5 @@ scripts/exp/
 .vercel-tmp/
 .vercel/
 ~$*.xlsx
+.vercel
+.env*
