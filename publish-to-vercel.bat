@@ -27,16 +27,20 @@ where node >nul 2>&1
 if errorlevel 1 echo [错误] 未找到 Node.js，请先安装 Node.js 再试。 & pause & exit /b 1
 
 rem ---- 检查 Vercel CLI：优先全局安装，其次 npx 兜底 ----
-where vercel >nul 2>&1
-if not errorlevel 1 echo 已检测到全局安装的 Vercel CLI。
-if errorlevel 1 echo 未检测到全局 Vercel CLI，尝试 npx 兜底……
-if errorlevel 1 npx --yes vercel --version >nul 2>&1
-if errorlevel 1 echo [错误] Vercel CLI 不可用。 & echo 安装方式一：npm i -g vercel & echo 安装方式二：确保 npx 可用后重跑本脚本，将自动改用 npx --yes vercel --prod & pause & exit /b 1
-
+rem 注意：where / call 检查与其后的 if errorlevel 判断之间，
+rem 不得插入 echo 等会冲刷 errorlevel 的命令，故提示语统一后置。
 set "VERCEL_CMD="
+set "NPX_MODE="
 where vercel >nul 2>&1
 if not errorlevel 1 set "VERCEL_CMD=vercel"
-if errorlevel 1 set "VERCEL_CMD=npx --yes vercel"
+if errorlevel 1 set "NPX_MODE=1"
+if defined NPX_MODE where npx >nul 2>&1
+if defined NPX_MODE if errorlevel 1 echo [错误] Vercel CLI 不可用：未找到 vercel，npx 也不存在。 & echo 安装方式一：npm i -g vercel & echo 安装方式二：确保 npx 可用后重跑本脚本，将自动使用 npx --yes vercel --prod & pause & exit /b 1
+if defined NPX_MODE call npx --yes vercel --version >nul 2>&1
+if defined NPX_MODE if errorlevel 1 echo [错误] Vercel CLI 不可用：npx --yes vercel --version 执行失败。 & echo 安装方式一：npm i -g vercel & echo 安装方式二：确保 npx 可用后重跑本脚本，将自动使用 npx --yes vercel --prod & pause & exit /b 1
+if defined NPX_MODE set "VERCEL_CMD=npx --yes vercel"
+if defined NPX_MODE echo 未检测到全局 Vercel CLI，已验证 npx 兜底可用。
+if not defined NPX_MODE echo 已检测到全局安装的 Vercel CLI。
 
 rem ---- 发布前提示，中文提示保持默认 936 代码页 ----
 echo.
@@ -49,7 +53,9 @@ rem ---- 切换 UTF-8 代码页后再运行 vercel，其输出可能含中文 ----
 chcp 65001 >nul
 
 rem ---- 执行发布。不给 vercel 加 --yes，首次链接项目需交互确认 ----
-%VERCEL_CMD% --prod
+rem vercel / npx 均为 npm 生成的 .cmd shim，不带 call 调用会
+rem 转移控制权不再返回，导致错误分支与 pause 被跳过，故必须 call。
+call %VERCEL_CMD% --prod
 if errorlevel 1 echo. & echo [ERROR] deploy failed, see messages above. First-time use may need: vercel login & pause & exit /b 1
 
 echo.
