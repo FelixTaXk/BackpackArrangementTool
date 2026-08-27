@@ -98,7 +98,6 @@
               </label>
               <label>求解引擎
                 <select id="engineMode">
-                  <option value="legacy">经典精确搜索</option>
                   <option value="hybrid">元启发式 SA</option>
                   <option value="auto" selected>混合 Portfolio</option>
                 </select>
@@ -118,10 +117,15 @@
                 <label>攻 <input id="weightAtk" type="number" min="0" step="0.1" value="1"></label>
                 <label>防 <input id="weightDef" type="number" min="0" step="0.1" value="1"></label>
                 <label>生命 <input id="weightHp" type="number" min="0" step="0.1" value="1"></label>
+                <label>伤害 <input id="weightDmg" type="number" min="0" step="0.1" value="1"></label>
+                <label>暴击伤害 <input id="weightCrit" type="number" min="0" step="0.1" value="1"></label>
+                <label>治疗效果 <input id="weightHeal" type="number" min="0" step="0.1" value="1"></label>
+                <label>护盾值 <input id="weightShield" type="number" min="0" step="0.1" value="1"></label>
+                <label>汲取 <input id="weightDrain" type="number" min="0" step="0.1" value="1"></label>
                 <span id="weightPresets">
-                  <button id="weightPresetOfficial" class="attr-medallion active" data-weights="1,1,1">官方定价</button>
-                  <button id="weightPresetAtk" class="attr-medallion" data-weights="3,0,0">纯攻击力</button>
-                  <button id="weightPresetTank" class="attr-medallion" data-weights="0,3,3">生存续航</button>
+                  <button id="weightPresetOfficial" class="attr-medallion active" data-weights="1,1,1,1,1,1,1,1">官方定价</button>
+                  <button id="weightPresetAtk" class="attr-medallion" data-weights="3,0,0,1,1,1,1,1">纯攻击力</button>
+                  <button id="weightPresetTank" class="attr-medallion" data-weights="0,3,3,1,1,1,1,1">生存续航</button>
                 </span>
               </span>
             </div>
@@ -132,7 +136,7 @@
               <button id="saveBtn">保存当前配置</button>
               <button id="loadBtn">读取配置</button>
             </div>
-            <div class="hint">快速档优先在 3 秒内给出可用结果；深度档使用自定义上限继续优化。求解引擎默认为混合 Portfolio（auto 档：经典精确搜索 DFS + 元启发式 SA 并行组合，取各成员最佳结果），也可切换经典精确搜索或元启发式 SA；快速档固定使用经典精确搜索，评分与比较口径完全一致。并行搜索会用多个不同随机起点同时计算并合并最佳结果，速度更快但会增加 CPU 与耗电，默认关闭。达到时间或节点上限不代表已证明全局最优。属性权重三项默认全 1（官方定价）与现状一致；权重只作用于基础属性计价，加成按原价，0 按 0.01 保底。</div>
+            <div class="hint">快速档优先在 3 秒内给出可用结果；深度档使用自定义上限继续优化。求解引擎统一为新引擎（auto 档：1 个经典 DFS 种子源 + 元启发式 SA 并行组合，取各成员最佳结果；hybrid 档全为 SA），快速档同样使用 SA 引擎（仅节点/时间上限收紧）。并行搜索会用多个不同随机起点同时计算并合并最佳结果，速度更快但会增加 CPU 与耗电，默认关闭。达到时间或节点上限不代表已证明全局最优。属性权重八项默认全 1（官方定价）与现状一致；权重只作用于基础属性计价，加成按原价，0 按 0.01 保底。</div>
           </div>
         </div>
         <div class="result-summary">
@@ -160,7 +164,7 @@
         <li>从法宝库添加法宝到已有法宝清单；真正参与计算的是已有法宝清单。需要指定某件法宝优先获得更多邻居时，在“邻接优先级”中填写数字：1 最高，数字越小越优先；留空使用默认规则。</li>
         <li>加成模式一：“提升相邻同属性”（多为单格法宝）：给每个相邻的同属性法宝提供“相邻法宝各项基础值 × 对应加成率”的加成。</li>
         <li>加成模式二：“提升自己”：每相邻一个同属性法宝，就按“自身各项基础值 × 对应加成率”给自身增加一次加成。</li>
-        <li>实际总属性 = 全部法宝各项基础属性之和 + 全部加成事件各项目加成之和（所有项目数值求和后作为标量参与求解比较）；统计面板按项目（攻击、防御、生命值）分项显示基础值、加成值与合计。</li>
+        <li>实际总属性 = 全部法宝各项基础属性之和 + 全部加成事件各项目加成之和（所有项目数值求和后作为标量参与求解比较）；统计面板按项目（攻击力、防御、生命值、伤害、暴击伤害、治疗效果、护盾值、汲取 共 8 项）分项显示基础值、加成值与合计。</li>
       </ol>
       <p class="hint">重点邻接与总邻接均按“相邻的不同法宝”计算，同一对法宝即使接触多条边也只计一次。求解比较顺序为：完整装入、实际总属性、手动邻接优先级、默认邻接优先级、总邻接数量。默认重点档位为：红色五格、金色四格、红色三格（自身加成）、紫/蓝/绿色四格。</p>
     </div>

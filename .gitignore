@@ -7,3 +7,4 @@ scripts/exp/
 ~$*.xlsx
 .vercel
 .env*
+.workbuddy/

@@ -18,7 +18,7 @@ function prepareInventoryItems(){
   // 旋转/镜像选项已从界面移除；用户要求禁止旋转与镜像，法宝仅以原方向摆放。
   const allowRot = false;
   const allowMir = false;
-  const {mask:activeMask} = buildActiveMask();
+  const {lo:activeLo, hi:activeHi} = buildActiveMask();
   const prepared = [];
   const skipped = [];
   const statIds = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id);
@@ -44,22 +44,32 @@ function prepareInventoryItems(){
       manualOrder: -1,
       placements: []
     };
-    base.priorityTier = selfPriorityTier(base);
+    base.priorityTier = bonusPriorityTier(base);
     const placeMap = new Map();
     for(const ori of orientations(base.cells, allowRot, allowMir)){
       const maxR = Math.max(...ori.map(x=>x[0])), maxC = Math.max(...ori.map(x=>x[1]));
       for(let r0=0;r0<=H-maxR-1;r0++){
         for(let c0=0;c0<=W-maxC-1;c0++){
           const abs = ori.map(([r,c])=>[r+r0,c+c0]);
-          let m = 0n, ok = true;
+          // 双 Uint32 位板：格位必须全部落在已解锁掩码内，否则该摆放不可行。
+          let mLo = 0, mHi = 0, ok = true;
           for(const [r,c] of abs){
-            const b = bitOf(r,c);
-            if((activeMask & b) === 0n){ ok = false; break; }
-            m |= b;
+            const idx = r*W+c;
+            if(idx < 32){
+              const b = 1 << idx;
+              if((activeLo & b) === 0){ ok = false; break; }
+              mLo |= b;
+            }else{
+              const b = 1 << (idx-32);
+              if((activeHi & b) === 0){ ok = false; break; }
+              mHi |= b;
+            }
           }
-          if(ok && !placeMap.has(m.toString())){
-            placeMap.set(m.toString(), {
-              mask:m, cells:abs, uid:base.uid, no:base.no, itemName:base.name, typeName:base.typeName,
+          // mask 直接以十进制串落库：既是 placeMap 去重键，也是跨线程线格式（与旧 BigInt.toString() 逐字一致）。
+          const maskDec = ok ? maskToDec(mLo, mHi) : '';
+          if(ok && !placeMap.has(maskDec)){
+            placeMap.set(maskDec, {
+              mask:maskDec, cells:abs, uid:base.uid, no:base.no, itemName:base.name, typeName:base.typeName,
               area:base.area, quality:base.quality, value:base.value, stats:base.stats, rates:base.rates, bonusKind:base.bonusKind, attribute:base.attribute, priorityTier:base.priorityTier, customPriority:base.customPriority, manualOrder:-1, itemIndex:-1
             });
           }
@@ -232,19 +242,20 @@ function compareSolverBest(a,b){
 //   浮点重算会污染 legacy 哈希种子 solver-worker.js L25/L56，改变 RNG 序列）；
 // - 否则返回原始数组 [wAtk, wDef, wHp]。
 function readWeightMul(){
-  // 权重口径首判：默认口径 ≡ 全 1，直接 return null（改写块/口径行/settings 键全不执行）；仅自定义口径才读三 input。
+  // 权重口径首判：默认口径 ≡ 全 1，直接 return null（改写块/口径行/settings 键全不执行）；仅自定义口径才读八 input。
   const modeEl = document.getElementById('weightMode');
   if(modeEl && modeEl.value !== 'custom') return null;
   if(window.__WEIGHTS_OFF__) return null;
   const weightMul = [];
-  for(const id of ['weightAtk','weightDef','weightHp']){
+  for(const id of WEIGHT_INPUT_IDS){
     const el = document.getElementById(id);
     if(!el || String(el.value).trim() === '') return null; // 控件缺失/清空/空白：非法回退，非「0」
     const v = Number(el.value);
     if(!Number.isFinite(v) || v < 0 || v > 1e6) return null;
     weightMul.push(v);
   }
-  if(weightMul[0] === 1 && weightMul[1] === 1 && weightMul[2] === 1) return null;
+  // 八维权重全部为 1 → 默认 ≡ 全 1，return null（禁止浮点重算路径，避免污染 legacy 哈希种子改变 RNG 序列）。
+  if(weightMul.length > 0 && weightMul.every(w => w === 1)) return null;
   return weightMul;
 }
 
@@ -257,7 +268,7 @@ function readWeightMul(){
 function trueStatsOfBest(best){
   const statKeys = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id);
   const K = statKeys.length;
-  const dec2lohi = s=>{ const n = Number(s); const hi = Math.floor(n / 4294967296); return {lo: n - hi * 4294967296, hi}; };
+  const dec2lohi = maskDecToLoHi; // utils.js 共享实现（原就地副本已上收，逐字同式）
   const invByUid = new Map((Array.isArray(inventory) ? inventory : []).map(x=>[x.uid, x]));
   const views = [];
   for(const p of best.placements){
@@ -376,13 +387,14 @@ function solveAndRender(){
     // 自动成为 Σ bonus_k×w_k，冻结 worker 零改动。权重向量短于属性数时缺位按 0（该属性加成不计价）。
     items.forEach(t=>{ t.rates.forEach((_,k)=>{ const w = weightMul[k]; t.rates[k] *= Number.isFinite(w) ? w : 0; }); });
   }
-  const {mask:activeMask, count:activeCells} = buildActiveMask();
+  const {lo:activeLo, hi:activeHi, count:activeCells} = buildActiveMask();
   if(activeCells===0){ alert('请至少选择一个已解锁空间格。'); return; }
   if(inventory.length===0){ alert('请先从法宝库添加已有法宝。'); return; }
   if(items.length===0){ alert('已有物品都无法放入当前空间。请调整空间、旋转/镜像设置或物品清单。'); return; }
   const searchMode=document.getElementById('searchMode').value;
-  // 求解引擎：DOM 取值缺省 auto（期 3 放量默认档）；fast 档恒走 legacy（见 engOrchCreateWorkers，零行为变化铁律）。
-  // 老存档兼容（期 3 拍板：保守）：persistence 读档缺字段回退保持 legacy（老用户读档行为不变），已存值跟随存档。
+  // 求解引擎：DOM 取值缺省 auto（统一新引擎默认档）；engineMode 仅 auto/hybrid（legacy 档已从界面移除，
+  // 见 index.html / engine-orchestrator.js）。fast 档同样走 SA 引擎（仅节点/时间上限被收紧，见 engOrchCreateWorkers）。
+  // 老存档兼容（保守）：persistence 读档 legacy 值迁移为 auto（统一新引擎），已存 auto/hybrid 跟随存档。
   const engineMode=(document.getElementById('engineMode') && document.getElementById('engineMode').value) || 'auto';
   const requestedNodeLimit = Math.max(1000, Number(document.getElementById('nodeLimit').value)||2500000);
   const requestedTimeLimit = Math.max(100, Number(document.getElementById('timeLimit').value)||20000);
@@ -395,16 +407,18 @@ function solveAndRender(){
   const requestedWorkerCount=Math.floor(Number(document.getElementById('workerCount').value)||2);
   const workerCount=parallel?Math.max(2,Math.min(workerLimit,requestedWorkerCount)):1;
 
+  // placements.mask 自 prepareInventoryItems 起即为十进制串（旧版此处的 BigInt→String 转换已前移），
+  // 浅拷贝仍保留：避免把加权缩放后的 prepared 副本引用直接交给 structured clone 之外的消费点。
   const serialItems = items.map(t=>({
     ...t,
-    placements:t.placements.map(p=>({...p, mask:p.mask.toString()}))
+    placements:t.placements.map(p=>({...p}))
   }));
   const totalSearchArea = inventory.reduce((sum,x)=>sum+(x.cells?.length||0),0);
   const totalSearchBase = inventory.reduce((sum,x)=>sum+Math.max(0,Number(x.value)||0),0);
   // Worker 启动负载：legacy 档原样走现有 postMessage；SA 档由 orchestrator 构建模型与 init
   const workerPayload={
     items:serialItems,
-    activeMask:activeMask.toString(), activeCells, W, H, nodeLimit, timeLimit, useBonus,
+    activeMask:maskToDec(activeLo, activeHi), activeCells, W, H, nodeLimit, timeLimit, useBonus,
     statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id),
     statCount:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).length,
     manualCount:manualPriorityLevels.length,
@@ -433,7 +447,7 @@ ${skipped.length>0?'存在单件无法合法放置的物品，将直接搜索最
 自定义邻接优先物品：${manualItems.length} 件
 求解起点：从已有物品清单自动生成
 ${focusAttr ? `优化目标：${statName(focusAttr)}加成最大化（忽略其它属性加成）\n` : ''}
-${weightMul ? `属性权重：攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}（搜索目标 total = Σ base_k×w_k + Σ bonus_k×w_k，w=0 属性不计价、基础全零按 0.01 保底；横幅与分项呈实际总属性 = Σ真实基础 + Σ真实加成，搜索目标仅用于导向搜索）\n` : ''}
+${weightMul ? `属性权重：${formatWeightVector(weightMul)}（搜索目标 total = Σ base_k×w_k + Σ bonus_k×w_k，w=0 属性不计价、基础全零按 0.01 保底；横幅与分项呈实际总属性 = Σ真实基础 + Σ真实加成，搜索目标仅用于导向搜索）\n` : ''}
 状态区会每 500 ms 更新计时；求解器阶段、节点和最好评分在收到新进度时同步更新。
 页面仍可正常操作；需要中止时点击“停止计算”。`;
 
@@ -496,7 +510,7 @@ ${weightMul ? `属性权重：攻×${weightMul[0]}、防×${weightMul[1]}、生�
     // 属性权重终态口径行（仅非聚焦分支）：聚焦分支的权重行由 ui-focus.js 在锚点重组后写入，
     // 两分支互斥不得双写（重组只保留特定 suffix，重组前写入的尾行会被吞掉）。
     if(weightMul && !focusAttr){
-      document.getElementById('statusBox').textContent += `\n\n属性权重口径：权重向量 [攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}]；搜索目标 total = Σ base_k × w_k + Σ bonus_k × w_k（w=0 属性不计价；基础全零时按 0.01 保底）；横幅与分项呈实际总属性（Σ真实基础 + Σ真实加成），搜索目标仅用于导向搜索。`;
+      document.getElementById('statusBox').textContent += `\n\n属性权重口径：权重向量 [${formatWeightVector(weightMul)}]；搜索目标 total = Σ base_k × w_k + Σ bonus_k × w_k（w=0 属性不计价；基础全零时按 0.01 保底）；横幅与分项呈实际总属性（Σ真实基础 + Σ真实加成），搜索目标仅用于导向搜索。`;
     }
   };
   // 会话级硬看门狗（任务 7）：会话上限 = timeLimit + polish 预算（与 engine-worker.js

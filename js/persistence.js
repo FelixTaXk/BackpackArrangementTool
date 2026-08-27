@@ -11,9 +11,9 @@ function saveConfig(){
     engineMode:document.getElementById('engineMode').value,
     // 加成聚焦为可选字段（只加法）；旧存档缺失时读取侧回退 ''（默认·总收益最大化），schemaVersion 不变
     focusAttr:(document.getElementById('focusAttr') || {}).value || '',
-    // 属性权重（一期线性）：存三 input 的原始字符串数组（0 必须存活，禁止 Number(..)||1 一类归一）；
+    // 属性权重（一期线性）：存八 input 的原始字符串数组（0 必须存活，禁止 Number(..)||1 一类归一）；
     // 旧存档无此键读档行为不变，schemaVersion 不变
-    weightMul:['weightAtk','weightDef','weightHp'].map(id=>(document.getElementById(id) || {}).value ?? ''),
+    weightMul:WEIGHT_INPUT_IDS.map(id=>(document.getElementById(id) || {}).value ?? ''),
     // 权重口径开关：存 select 原始值（default/custom）；读取侧白名单校验，缺失/非法不触碰 DOM，schemaVersion 不变
     weightMode:(document.getElementById('weightMode') || {}).value,
     nodeLimit:Number(document.getElementById('nodeLimit').value)||2500000,
@@ -55,24 +55,24 @@ function applySharedSettings(data){
   }
   if(Number(data.nodeLimit) >= 1000) document.getElementById('nodeLimit').value = String(Math.floor(Number(data.nodeLimit)));
   if(Number(data.timeLimit) >= 100) document.getElementById('timeLimit').value = String(Math.floor(Number(data.timeLimit)));
-  // 求解引擎：非法或缺省值（旧存档）一律回退 legacy。
-  // 期 3 决策（拍板：保守）：页面默认档已改 auto（index.html selected + solver.js DOM 缺省），
-  // 但老存档缺此字段读档时仍回退 legacy（老用户读档行为不变）；已存值跟随存档。
-  document.getElementById('engineMode').value = (data.engineMode === 'hybrid' || data.engineMode === 'auto') ? data.engineMode : 'legacy';
+  // 求解引擎：auto/hybrid 跟随存档；legacy（老存档）统一迁移为 auto（legacy 档已从界面移除，统一新引擎）。
+  // 缺字段（更旧存档）也回退 auto。
+  document.getElementById('engineMode').value = (data.engineMode === 'hybrid' || data.engineMode === 'auto') ? data.engineMode : 'auto';
   // 加成聚焦：须属 bonusStats id 否则回退 ''（老存档无此键行为不变，仿 engineMode 保守先例）。
   const focusStatKeys = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id);
   const focusSel = document.getElementById('focusAttr');
   if(focusSel) focusSel.value = focusStatKeys.indexOf(data.focusAttr) >= 0 ? data.focusAttr : '';
   // 属性权重（一期线性）：老存档无此键（data.weightMul == null）不触碰 DOM，行为不变；
-  // 仅 Array.isArray && length===3 且逐项 Number.isFinite(Number(v)) && Number(v)>=0 才写回，非法值整体忽略保持默认 1。
-  // schemaVersion 不变；程序化赋值不派发 change（先例见上方 searchMode 注释），手工同步 chips 选中态。
-  if(Array.isArray(data.weightMul) && data.weightMul.length === 3 && data.weightMul.every(v=>Number.isFinite(Number(v)) && Number(v) >= 0)){
+  // 仅 Array.isArray && (length===3 || length===8) 且逐项合法才写回：旧 3 维（atk/def/hp）扩展为 8 维
+  // （新增 5 个 rate-only 维度默认权重 1），新 8 维原样回写。非法值整体忽略保持默认 1。schemaVersion 不变；
+  // 程序化赋值不派发 change（先例见上方 searchMode 注释），手工同步 chips 选中态。
+  if(Array.isArray(data.weightMul) && (data.weightMul.length === 3 || data.weightMul.length === 8) && data.weightMul.every(v=>Number.isFinite(Number(v)) && Number(v) >= 0)){
     // 回写归一化为十进制串：校验用 Number(v) 会接受 "0x10"/true 一类字面量，原样赋给 number input
     // 会被 HTML 净化为 ''，再被 readWeightMul 判非法，故需归一化；而 "٣" 一类非 ASCII 数字串
     // Number() 判 NaN，在校验处即整体回退（不进入本分支）；String(Number(v)) 保证校验值与 DOM 值回环一致。
-    document.getElementById('weightAtk').value = String(Number(data.weightMul[0]));
-    document.getElementById('weightDef').value = String(Number(data.weightMul[1]));
-    document.getElementById('weightHp').value = String(Number(data.weightMul[2]));
+    // 3 维 → 8 维扩展：新 5 维（伤害/暴击伤害/治疗效果/护盾值/汲取）权重补 1。
+    const w = data.weightMul.length === 3 ? [...data.weightMul, '1','1','1','1','1'] : data.weightMul.slice(0, 8);
+    WEIGHT_INPUT_IDS.forEach((id, i) => { document.getElementById(id).value = String(Number(w[i])); });
     if(typeof syncWeightPresetChips === 'function') syncWeightPresetChips();
   }
   // 权重口径：仅白名单值写 DOM（老存档缺失/非法不触碰，保持 DOM 现状）；

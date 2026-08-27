@@ -12,6 +12,25 @@ function starMultiplier(quality, starLevel){
   return 1 + STAR_LEVEL_BONUS[lv - 1];
 }
 
+// ---------------------------------------------------------------------------
+// 属性注册表派生映射与共享常量
+// ---------------------------------------------------------------------------
+// extraRates 在数据库中以中文名（伤害/暴击伤害/…）存储，bonusStats 注册表以 id 存储；
+// 此映射把 extraRates 中文名解析为注册表 id，供 normalizeItemRecord 把 rate-only 战斗加成并入有效基础属性。
+const STAT_NAME_TO_ID = (typeof window !== 'undefined' && window.TALISMAN_DB && Array.isArray(window.TALISMAN_DB.bonusStats))
+  ? Object.fromEntries(window.TALISMAN_DB.bonusStats.map(s => [s.name, s.id]))
+  : {};
+
+// 属性权重输入控件 id（与 bonusStats 注册表顺序一致：atk/def/hp/dmg/crit/heal/shield/drain）。
+// 全部权重口径读取/持久化/预设同步均以该列表为唯一事实源，避免散落的 3 维硬编码。
+const WEIGHT_INPUT_IDS = ['weightAtk','weightDef','weightHp','weightDmg','weightCrit','weightHeal','weightShield','weightDrain'];
+
+// 属性权重向量展示串：按 bonusStats 顺序拼「<项目名>×<w>」，全维度覆盖（rate-only 维度 w=0 显示 ×0 表示该维度不计价）。
+function formatWeightVector(weightMul){
+  const stats = (typeof window !== 'undefined' && window.TALISMAN_DB && Array.isArray(window.TALISMAN_DB.bonusStats)) ? window.TALISMAN_DB.bonusStats : [];
+  return stats.map((s, i) => `${statName(s.id)}×${Number(weightMul && weightMul[i]) || 0}`).join('、');
+}
+
 // 清单 / 法宝库记录统一按 talisman id 查库重建；数值全部来自数据库，不允许自定义。
 function normalizeItemRecord(item){
   const rec = item && typeof item === 'object' ? item : {};
@@ -35,6 +54,14 @@ function normalizeItemRecord(item){
   const baseStats = {...def.baseStats};
   if(starF !== 1){
     for(const k of Object.keys(baseStats)){ baseStats[k] = Math.round(Number(baseStats[k]) * starF * 10) / 10; }
+  }
+  // 「加成率即基础值」：将 rate-only 战斗加成（伤害/暴击伤害/治疗效果/护盾值/汲取）直接并入有效基础属性，
+  // 作为目标函数的直接基础贡献（该维度加成率恒为 0，不参与百分比加成传播，故不会重复计价）。
+  // 不参与长老星级放大（战斗加成百分比与基础属性 atk/def/hp 系不同机制，仅基础属性受星级倍率影响）。
+  const extraRates = def.extraRates || {};
+  for(const [name, v] of Object.entries(extraRates)){
+    const id = STAT_NAME_TO_ID[name];
+    if(id) baseStats[id] = Math.max(0, Number(v) || 0);
   }
   return {
     uid: rec.uid || ('inv-' + Date.now() + '-' + Math.random().toString(16).slice(2)),
@@ -114,22 +141,36 @@ function bonusDescription(it){
   return '无加成属性';
 }
 
-// 邻接优先级默认档位：优先读取数据库 priorityTier；缺省按“品质+格数”映射，
-// 与旧档序等价：红五格 > 金四格 > 红三格self > 紫四 > 蓝四 > 绿四。
-const DEFAULT_TIER_COUNT = 6;
-const DEFAULT_TIER_LABELS = ['红色五格','金色四格','红色三格（自身加成）','紫色四格','蓝色四格','绿色四格'];
-function defaultPriorityTierLabel(tier){ return DEFAULT_TIER_LABELS[tier] || `默认档位 ${tier + 1}`; }
-function selfPriorityTier(it){
+// ---------------------------------------------------------------------------
+// 双重优先级默认档位（P1：推广为「品质×格数」通用规则，覆盖全部加成项）
+// ---------------------------------------------------------------------------
+// 品质序（高→低）：红 > 金 > 紫 > 蓝 > 绿        （rank 0 = 最高优先级）
+// 格数序（高→低）：5 > 4 > 3 > 2 > 1              （rank 0 = 最高等级）
+// 单档 tier = 品质rank × 格数档数 + 格数rank，∈ [0, DEFAULT_TIER_COUNT)，tier 越小越优先。
+// 非加成物品（bonusKind === 'none'）一律返回 -1（不计入默认优先级）；
+// 加成物品（provider / self）全部覆盖，体现「红色最高、5 格最高」的双重优先级排序。
+const QUALITY_PRIORITY = ['red', 'gold', 'purple', 'blue', 'green'];
+const CELL_PRIORITY = [5, 4, 3, 2, 1];
+const DEFAULT_TIER_COUNT = QUALITY_PRIORITY.length * CELL_PRIORITY.length; // 5 × 5 = 25
+function qualityPriorityRank(q){
+  const id = QUALITY_NAME_TO_ID[q] || q;
+  return QUALITY_PRIORITY.indexOf(id); // 未知品质返回 -1
+}
+function cellPriorityRank(area){
+  return CELL_PRIORITY.indexOf(area);  // 未知格数返回 -1
+}
+function defaultPriorityTierLabel(tier){
+  if(!Number.isInteger(tier) || tier < 0 || tier >= DEFAULT_TIER_COUNT) return `默认档位 ${tier + 1}`;
+  const cellsIdx = tier % CELL_PRIORITY.length;
+  const qualityIdx = (tier - cellsIdx) / CELL_PRIORITY.length;
+  return `${qualityName(QUALITY_PRIORITY[qualityIdx])}${CELL_PRIORITY[cellsIdx]}格`;
+}
+// 加成物品的双重优先级档位（provider / self 一视同仁，仅按品质×格数排序）。
+function bonusPriorityTier(it){
   const kind = it.bonusKind || bonusKind(it);
-  if(kind !== 'self') return -1;
-  if(Number.isInteger(it.priorityTier) && it.priorityTier >= 0) return it.priorityTier;
-  const area = Number(it.area ?? (it.cells ? it.cells.length : 0));
-  const q = QUALITY_NAME_TO_ID[it.quality] || it.quality;
-  if(area === 5 && q === 'red') return 0;
-  if(area === 4 && q === 'gold') return 1;
-  if(area === 3 && q === 'red') return 2;
-  if(area === 4 && q === 'purple') return 3;
-  if(area === 4 && q === 'blue') return 4;
-  if(area === 4 && q === 'green') return 5;
-  return -1;
+  if(kind === 'none') return -1;
+  const qr = qualityPriorityRank(it.quality);
+  const cr = cellPriorityRank(Number(it.area ?? (it.cells ? it.cells.length : 0)));
+  if(qr < 0 || cr < 0) return -1; // 非法品质/格数不计
+  return qr * CELL_PRIORITY.length + cr;
 }

@@ -3,9 +3,9 @@
 // ============================================================================
 // 职责：
 //   1. engOrchCreateWorkers：按 engineMode × 搜索档位组合 Portfolio：
-//      - legacy 或 fast 档：全部 createSolverWorker（与现状逐字等价，零行为变化）；
-//      - hybrid：K 个全部 createEngineWorker；
-//      - auto：1 个 createSolverWorker（DFS 成员兼种子源）+ K-1 个 createEngineWorker。
+//      - legacy 档（仅老存档保守保留，界面已移除）：全部 createSolverWorker（与现状逐字等价）；
+//      - hybrid / auto 档（fast 与 deep 均走 SA）：全部 createEngineWorker，或 auto 的 1 个 DFS 种子源 + K-1 个 SA；
+//      - 快速档不再强制 legacy（见下方 useSa），仅节点/时间上限收紧。
 //      返回数组直接进 solverWorkers（cleanup/cancel/onerror 零改动覆盖），每个 Worker 带 _blobUrl。
 //   2. 回火 broker：engOrchHandleSwapReq——相邻温度对 (i,i+1) 奇偶轮转，
 //      Metropolis 准则 min(1, exp((βk-βk+1)(Ek+1-Ek))) 决定是否交换解。
@@ -41,8 +41,9 @@ function engOrchCreateWorkers(opts){
   const searchMode = opts.searchMode === 'fast' ? 'fast' : 'deep';
   const K = Math.max(1, Math.floor(Number(opts.workerCount) || 1));
   const payload = opts.payload;
-  // 铁律：fast 档恒走 legacy 工厂；legacy 档与现状逐字等价
-  const useSa = searchMode !== 'fast' && engineMode !== 'legacy';
+  // 统一新引擎：legacy 仅老存档保守保留；auto/hybrid（含 fast 档）一律走 SA。
+  // 快速档不再强制 legacy（仅节点/时间上限在 solver.js 处收紧），故 useSa 与 searchMode 无关。
+  const useSa = engineMode !== 'legacy';
   if(!useSa){
     engOrchState = null;
     return Array.from({length:K}, () => createSolverWorker());

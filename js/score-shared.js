@@ -238,7 +238,9 @@ function scoreSerializeBest(best, statKeys, statCount){
 
 // ----------------------------------------------------------------------------
 // 自测：手工构造小布局的黄金断言。node 与浏览器均可跑（typeof window 守卫）。
-// 返回 {pass, failures[]}。
+// 评分纯函数对向量维数 K 完全泛化（K 取自 payload.statCount），本自测用 K=3 向量验证核心契约；
+// 生产环境 bonusStats 注册表已扩展为 8 维（atk/def/hp + dmg/crit/heal/shield/drain），
+// 引擎与 frozen worker 均按 payload 维度运行，无需为 K 改写逻辑。返回 {pass, failures[]}。
 // ----------------------------------------------------------------------------
 function __SCORE_SELFTEST__(){
   const failures = [];

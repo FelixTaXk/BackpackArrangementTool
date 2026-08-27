@@ -128,7 +128,7 @@
       // 则不写权重行。
       const weightMul = (window.lastResult && window.lastResult.settings && window.lastResult.settings.weightMul) || null;
       if(weightMul){
-        statusBox.textContent += `\n\n属性权重口径：权重向量 [攻×${weightMul[0]}、防×${weightMul[1]}、生命×${weightMul[2]}]；搜索目标 total = Σ base_k × w_k + Σ bonus_k × w_k（w=0 属性不计价；基础全零时按 0.01 保底）；横幅与分项呈实际总属性（Σ真实基础 + Σ真实加成），搜索目标仅用于导向搜索。`;
+        statusBox.textContent += `\n\n属性权重口径：权重向量 [${formatWeightVector(weightMul)}]；搜索目标 total = Σ base_k × w_k + Σ bonus_k × w_k（w=0 属性不计价；基础全零时按 0.01 保底）；横幅与分项呈实际总属性（Σ真实基础 + Σ真实加成），搜索目标仅用于导向搜索。`;
       }
     }
   }

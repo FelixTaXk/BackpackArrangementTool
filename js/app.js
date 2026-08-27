@@ -17,15 +17,15 @@ function init(){
 }
 
 // 属性权重预设 chips 选中态同步（全局函数，persistence.js 读档复用）：
-// 以三 input 当前值（Number 合法化后）逐一 === 各钮 dataset.weights 向量决定 .active；无匹配则三钮全去选中。
+// 以八 input 当前值（Number 合法化后）逐一 === 各钮 dataset.weights 向量决定 .active；无匹配则八钮全去选中。
 function syncWeightPresetChips(){
-  const inputs = ['weightAtk','weightDef','weightHp'].map(id=>{
+  const inputs = WEIGHT_INPUT_IDS.map(id=>{
     const el = document.getElementById(id);
     return el ? Number(el.value) : NaN;
   });
   document.querySelectorAll('#weightPresets button.attr-medallion').forEach(btn=>{
     const vec = (btn.dataset.weights || '').split(',').map(Number);
-    btn.classList.toggle('active', vec.length === 3 && vec.every((v,i)=>v === inputs[i]));
+    btn.classList.toggle('active', vec.length === WEIGHT_INPUT_IDS.length && vec.every((v,i)=>v === inputs[i]));
   });
 }
 
@@ -82,8 +82,8 @@ function bindEvents(){
     lastResult = null;
     renderResultGrid(null);
   });
-  // 属性权重三项（一期线性）：与既有控件同构用 change 事件（不用 input）；权重变化使既有结果口径失效。
-  for(const id of ['weightAtk','weightDef','weightHp']){
+  // 属性权重八项：与既有控件同构用 change 事件（不用 input）；权重变化使既有结果口径失效。
+  for(const id of WEIGHT_INPUT_IDS){
     document.getElementById(id).addEventListener('change', ()=>{
       lastResult = null;
       renderResultGrid(null);
@@ -99,15 +99,13 @@ function bindEvents(){
     syncWeightPresetChips();
   });
   // 预设钮容器事件委托（仿属性筛选罗盘写法）：程序化赋值不派发 change（先例见 persistence.js 注释），
-  // 手工执行同一「清结果 + 同步选中态」逻辑。
+  // 手工执行同一「清结果 + 同步选中态」逻辑；权重向量长度与 WEIGHT_INPUT_IDS 一致（8 维）。
   document.getElementById('weightPresets').addEventListener('click', e=>{
     const btn = e.target.closest('button.attr-medallion');
     if(!btn) return;
     const vec = (btn.dataset.weights || '').split(',').map(Number);
-    if(vec.length !== 3 || vec.some(v=>!Number.isFinite(v) || v < 0)) return;
-    document.getElementById('weightAtk').value = String(vec[0]);
-    document.getElementById('weightDef').value = String(vec[1]);
-    document.getElementById('weightHp').value = String(vec[2]);
+    if(vec.length !== WEIGHT_INPUT_IDS.length || vec.some(v=>!Number.isFinite(v) || v < 0)) return;
+    WEIGHT_INPUT_IDS.forEach((id, i) => { document.getElementById(id).value = String(vec[i]); });
     lastResult = null;
     renderResultGrid(null);
     syncWeightPresetChips();
