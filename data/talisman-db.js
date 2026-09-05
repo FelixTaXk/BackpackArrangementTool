@@ -1,12 +1,8 @@
 // data/talisman-db.js —— 法宝内置数据库（由 scripts/convert-excel.mjs 从 法宝属性.xlsx 转换生成）。
 // 必须在 js/config.js 之前加载；config.js 的 validateTalismanDB() 会在启动时逐条校验。
-// 数据说明：talismans 共 360 条，按属性分组（金木水火土雷体）；
-// 参与计算的属性项目共 8 维（见 bonusStats 注册表）：
-//   - atk/def/hp：基础属性，参与百分比加成传播（provider/self 的 bonusRates）；
-//   - dmg/crit/heal/shield/drain（伤害/暴击伤害/治疗效果/护盾值/汲取）：rate-only 战斗加成，
-//     按「加成率即基础值」口径直接计入目标函数（见 talisman-model.js normalizeItemRecord 的
-//     extraRates 并入逻辑），不参与百分比加成传播（该维度加成率恒为 0）。
-// extraStats 中 共鸣值/种类 仅为留存字段，不参与任何计算。
+// 数据说明：talismans 共 361 条，按属性分组（金木水火土雷体）；
+// 参与计算的属性项目仅 atk/def/hp（见 bonusStats 注册表），加成率为百分比数值（如 40 表示 40%）；
+// extraStats/extraRates 为 Excel 中不参与计算的留存项目（如 共鸣值/种类/伤害/暴击伤害等），仅供备查。
 // id 规则：id 为稳定标识，按「名称|属性|品质」匹配上一版产物复用旧 id；新增条目从该 (属性,品质) 组
 // 历史最大序号+1 分配，退役序号永不复用；可在 xlsx 任意位置插行/删行，已有法宝 id 不变。
 window.TALISMAN_DB = {
@@ -16,12 +12,7 @@ window.TALISMAN_DB = {
   bonusStats:[
     {id:'atk', name:'攻击力'},
     {id:'def', name:'防御'},
-    {id:'hp', name:'生命值'},
-    {id:'dmg', name:'伤害'},
-    {id:'crit', name:'暴击伤害'},
-    {id:'heal', name:'治疗效果'},
-    {id:'shield', name:'护盾值'},
-    {id:'drain', name:'汲取'}
+    {id:'hp', name:'生命值'}
   ],
   talismans:[
     // ===== 金 =====
@@ -751,6 +742,8 @@ window.TALISMAN_DB = {
     {id:'ti-red-007', name:'巨灵擎天', attribute:'体', quality:'红', cells:[[0,1],[1,0],[1,1],[2,0],[2,1]],
      baseStats:{atk:82, def:41, hp:7100}, bonusMode:'self', bonusRates:{def:50}, extraStats:{'共鸣值':64, '种类':"锤"}},
     {id:'ti-red-008', name:'真武神镯', attribute:'体', quality:'红', cells:[[0,0],[0,1],[1,0],[1,1],[2,0]],
-     baseStats:{atk:108, def:27, hp:6500}, bonusMode:'self', bonusRates:{hp:60}, extraStats:{'共鸣值':64, '种类':"御"}}
+     baseStats:{atk:108, def:27, hp:6500}, bonusMode:'self', bonusRates:{hp:60}, extraStats:{'共鸣值':64, '种类':"御"}},
+    {id:'ti-red-009', name:'无相无我', attribute:'体', quality:'红', cells:[[0,1],[1,0],[1,1],[2,0],[2,1]],
+     baseStats:{atk:118, def:19, hp:6400}, bonusMode:'self', bonusRates:{hp:60}, extraStats:{'共鸣值':64, '种类':"御"}}
   ]
 };

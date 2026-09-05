@@ -1,36 +1,102 @@
 @echo off
+setlocal
+REM ================================================================
+REM 法宝 Excel 转 talisman-db.js —— 开发维护脚本（双击运行）。
+REM 依赖 Node.js 与 SheetJS(xlsx)；xlsx 不写入项目 package.json，
+REM 而是自动安装到 %TEMP%\xlsx-conv，保持项目零依赖。
+REM 用法：直接双击本文件（cmd 以 GBK 解析，勿改为 UTF-8 编码）。
+REM 注意：npm/npx 是 npm 生成的 .cmd shim，必须用 call 调用，
+REM       否则控制权转移不返回，后续行全部被跳过（表现为闪退）。
+REM ================================================================
 cd /d "%~dp0"
+REM 中文提示（GBK，须在 chcp 65001 之前输出）
+if not exist "法宝属性.xlsx" (
+    echo [错误] 当前目录找不到 法宝属性.xlsx
+    echo        请把本脚本放在项目根目录再运行。
+    echo.
+    pause
+    exit /b 1
+)
 
-rem ============================================================
-rem convert-talisman-db.bat -- 法宝数据一键转换（xlsx --^> data\talisman-db.js）
-rem
-rem 用法：双击运行本文件即可。
-rem   1. 新增/修改法宝后，请先保存 Excel（法宝属性.xlsx）并关闭 Excel，再运行本文件。
-rem   2. 运行结束后请阅读「转换报告」，确认「0 条被拒」。
-rem   3. 刷新页面即可生效。
-rem
-rem 依赖：Node.js；SheetJS(xlsx) 缺失时会自动安装到 %TEMP%\xlsx-conv。
-rem 编码说明：本文件为 GBK 编码。cmd 解析 UTF-8 中文 bat 存在已知缺陷，
-rem   故 chcp 65001 放在运行 node 之前，其后只允许出现 ASCII 行。
-rem ============================================================
+chcp 65001 >nul
 
-rem ---- 检查 Node.js ----
-where node >nul 2>&1
-if errorlevel 1 echo [错误] 未找到 Node.js，请先安装 Node.js 后重试。 & pause & exit /b 1
+REM 允许用环境变量 XLSX_MODULE_DIR 覆盖默认安装位置
+if not defined XLSX_MODULE_DIR set "XLSX_MODULE_DIR=%TEMP%\xlsx-conv"
+set "XLSX_DIR=%XLSX_MODULE_DIR%"
 
-rem ---- 检查 SheetJS(xlsx)，缺失则自动安装到 %TEMP%\xlsx-conv ----
-if exist "%TEMP%\xlsx-conv\node_modules\xlsx" echo SheetJS(xlsx) 已就绪。
-if not exist "%TEMP%\xlsx-conv\node_modules\xlsx" echo 未检测到 SheetJS(xlsx)，正在自动安装到 %TEMP%\xlsx-conv ...
-if not exist "%TEMP%\xlsx-conv" mkdir "%TEMP%\xlsx-conv"
-pushd "%TEMP%\xlsx-conv"
-if not exist "node_modules\xlsx" call npm install xlsx --no-fund --no-audit
-if not exist "node_modules\xlsx" echo [错误] SheetJS 安装失败，请检查网络或 npm 配置后重试。 & popd & pause & exit /b 1
+where node >nul 2>nul
+if errorlevel 1 (
+    echo [ERROR] Node.js not found in PATH.
+    echo         Please install Node.js LTS from https://nodejs.org and retry.
+    echo.
+    pause
+    exit /b 1
+)
+
+REM 就绪检查：以 node_modules\xlsx\package.json 实际存在为准。
+REM 旧版误用 package.json 判断——npm init 成功而 install 失败留下的
+REM 空 package.json 会导致跳过安装、带着残缺状态直接跑 node。
+if exist "%XLSX_DIR%\node_modules\xlsx\package.json" goto run_node
+
+REM ---- 自动安装 xlsx 到临时目录（官方源失败则用 npmmirror 镜像重试） ----
+echo [INFO] xlsx module not found, installing to "%XLSX_DIR%" ...
+if not exist "%XLSX_DIR%" mkdir "%XLSX_DIR%"
+pushd "%XLSX_DIR%"
+if not exist package.json call npm init -y >nul
+
+REM 尝试 1：官方 registry
+call npm install xlsx --no-fund --no-audit
+if not errorlevel 1 goto verify_install
+
+REM 尝试 2：npmmirror 镜像
+echo [WARN] install from registry.npmjs.org failed, retrying with npmmirror.com ...
+call npm install xlsx --no-fund --no-audit --registry=https://registry.npmmirror.com
+if not errorlevel 1 goto verify_install
+
+REM 尝试 3：npx 兜底（官方源）
+echo [WARN] npm install failed, trying npx fallback ...
+call npx --yes npm install xlsx --no-fund --no-audit
+if not errorlevel 1 goto verify_install
+
+REM 尝试 4：npx 兜底（镜像源）
+call npx --yes npm install xlsx --no-fund --no-audit --registry=https://registry.npmmirror.com
+
+:verify_install
 popd
 
-rem ---- 切换 UTF-8 代码页后执行转换（其后均为 ASCII 行）----
-chcp 65001 >nul
-set "XLSX_MODULE_DIR=%TEMP%\xlsx-conv"
-node scripts\convert-excel.mjs
-if errorlevel 1 echo. & echo [ERROR] conversion failed, see messages above.
+REM ---- 安装后校验：xlsx 目录必须真的存在，否则明确报错退出 ----
+if not exist "%XLSX_DIR%\node_modules\xlsx\package.json" (
+    echo.
+    echo [ERROR] xlsx auto-install FAILED: "%XLSX_DIR%\node_modules\xlsx" not found.
+    echo         Likely cause: network cannot reach npm registry.
+    echo         Manual fix, option A - npmmirror mirror:
+    echo           PowerShell:  mkdir "$env:TEMP\xlsx-conv" -Force; cd "$env:TEMP\xlsx-conv"; npm install xlsx --registry=https://registry.npmmirror.com
+    echo         Manual fix, option B - official registry:
+    echo           PowerShell:  mkdir "$env:TEMP\xlsx-conv" -Force; cd "$env:TEMP\xlsx-conv"; npm install xlsx
+    echo         Then double-click this script again.
+    echo.
+    pause
+    exit /b 1
+)
 
+echo [INFO] xlsx installed successfully.
+
+:run_node
+REM 将安装目录传给转换脚本，使其能找到临时安装的 xlsx
+set "XLSX_MODULE_DIR=%XLSX_DIR%"
+
+echo [INFO] Running conversion: scripts/convert-excel.mjs
+echo.
+call node scripts/convert-excel.mjs
+if errorlevel 1 (
+    echo.
+    echo [ERROR] conversion failed, see messages above.
+    pause
+    exit /b 1
+)
+
+echo.
+echo [OK] data/talisman-db.js generated successfully.
+echo      Please review git diff, then commit manually.
+echo.
 pause
