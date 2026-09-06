@@ -1,6 +1,6 @@
 // data/talisman-db.js —— 法宝内置数据库（由 scripts/convert-excel.mjs 从 法宝属性.xlsx 转换生成）。
 // 必须在 js/config.js 之前加载；config.js 的 validateTalismanDB() 会在启动时逐条校验。
-// 数据说明：talismans 共 361 条，按属性分组（金木水火土雷体）；
+// 数据说明：talismans 共 363 条，按属性分组（金木水火土雷体）；
 // 参与计算的属性项目仅 atk/def/hp（见 bonusStats 注册表），加成率为百分比数值（如 40 表示 40%）；
 // extraStats/extraRates 为 Excel 中不参与计算的留存项目（如 共鸣值/种类/伤害/暴击伤害等），仅供备查。
 // id 规则：id 为稳定标识，按「名称|属性|品质」匹配上一版产物复用旧 id；新增条目从该 (属性,品质) 组
@@ -459,6 +459,8 @@ window.TALISMAN_DB = {
     {id:'tu-gold-008', name:'崩山裂魂幡', attribute:'土', quality:'金', cells:[[0,1],[1,1],[2,0],[2,1]],
      baseStats:{atk:33, def:16, hp:6090}, bonusMode:'self', bonusRates:{}, extraStats:{'共鸣值':40, '种类':"幡"}, extraRates:{'伤害':10}},
     {id:'tu-red-004', name:'逐日镇岳', attribute:'土', quality:'红', cells:[[0,1],[1,1],[2,0],[2,1]],
+     baseStats:{atk:42, def:42, hp:6400}, bonusMode:'none', bonusRates:{}, extraStats:{'共鸣值':56, '种类':"锤"}},
+    {id:'tu-red-009', name:'九州定海', attribute:'土', quality:'红', cells:[[0,1],[1,1],[2,0],[2,1]],
      baseStats:{atk:27, def:13, hp:8600}, bonusMode:'none', bonusRates:{}, extraStats:{'共鸣值':56, '种类':"幡"}},
     {id:'tu-green-009', name:'撼地震破锤', attribute:'土', quality:'绿', cells:[[0,0],[0,1],[1,0],[2,0]],
      baseStats:{atk:10, def:10, hp:650}, bonusMode:'self', bonusRates:{}, extraStats:{'共鸣值':5, '种类':"锤"}, extraRates:{'伤害':5}},
@@ -472,10 +474,12 @@ window.TALISMAN_DB = {
      baseStats:{atk:35, def:35, hp:7100}, bonusMode:'none', bonusRates:{}, extraStats:{'共鸣值':56, '种类':"锤"}},
     {id:'tu-red-006', name:'五色炼天', attribute:'土', quality:'红', cells:[[0,0],[0,1],[1,0],[1,1],[2,0]],
      baseStats:{atk:46, def:11, hp:10400}, bonusMode:'self', bonusRates:{}, extraStats:{'共鸣值':64, '种类':"御"}, extraRates:{'治疗效果':10}},
-    {id:'tu-red-007', name:'泰山压顶', attribute:'土', quality:'红', cells:[[0,1],[1,0],[1,1],[2,0],[2,1]],
+    {id:'tu-red-007', name:'泰山压顶', attribute:'土', quality:'红', cells:[[0,1]],
      baseStats:{atk:46, def:23, hp:9800}, bonusMode:'self', bonusRates:{}, extraStats:{'共鸣值':64, '种类':"幡"}, extraRates:{'伤害':10}},
     {id:'tu-red-008', name:'十方大山', attribute:'土', quality:'红', cells:[[0,1],[0,2],[1,1],[2,0],[2,1]],
      baseStats:{atk:54, def:54, hp:7850}, bonusMode:'self', bonusRates:{}, extraStats:{'共鸣值':64, '种类':"锤"}, extraRates:{'伤害':10}},
+    {id:'tu-red-010', name:'庚辰龙脉', attribute:'土', quality:'红', cells:[[0,1]],
+     baseStats:{atk:64, def:64, hp:6850}, bonusMode:'self', bonusRates:{def:100}, extraStats:{'共鸣值':64, '种类':"锤"}},
     // ===== 雷 =====
     {id:'lei-green-001', name:'雷灵珠', attribute:'雷', quality:'绿', cells:[[0,0]],
      baseStats:{atk:6, def:0, hp:113}, bonusMode:'provider', bonusRates:{}, extraStats:{'共鸣值':2}, extraRates:{'伤害':2}},
