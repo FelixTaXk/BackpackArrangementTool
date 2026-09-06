@@ -474,11 +474,11 @@ window.TALISMAN_DB = {
      baseStats:{atk:35, def:35, hp:7100}, bonusMode:'none', bonusRates:{}, extraStats:{'共鸣值':56, '种类':"锤"}},
     {id:'tu-red-006', name:'五色炼天', attribute:'土', quality:'红', cells:[[0,0],[0,1],[1,0],[1,1],[2,0]],
      baseStats:{atk:46, def:11, hp:10400}, bonusMode:'self', bonusRates:{}, extraStats:{'共鸣值':64, '种类':"御"}, extraRates:{'治疗效果':10}},
-    {id:'tu-red-007', name:'泰山压顶', attribute:'土', quality:'红', cells:[[0,1]],
+    {id:'tu-red-007', name:'泰山压顶', attribute:'土', quality:'红', cells:[[0,1],[1,0],[1,1],[2,0],[2,1]],
      baseStats:{atk:46, def:23, hp:9800}, bonusMode:'self', bonusRates:{}, extraStats:{'共鸣值':64, '种类':"幡"}, extraRates:{'伤害':10}},
     {id:'tu-red-008', name:'十方大山', attribute:'土', quality:'红', cells:[[0,1],[0,2],[1,1],[2,0],[2,1]],
      baseStats:{atk:54, def:54, hp:7850}, bonusMode:'self', bonusRates:{}, extraStats:{'共鸣值':64, '种类':"锤"}, extraRates:{'伤害':10}},
-    {id:'tu-red-010', name:'庚辰龙脉', attribute:'土', quality:'红', cells:[[0,1]],
+    {id:'tu-red-010', name:'庚辰龙脉', attribute:'土', quality:'红', cells:[[0,1],[1,0],[1,1],[2,0],[2,1]],
      baseStats:{atk:64, def:64, hp:6850}, bonusMode:'self', bonusRates:{def:100}, extraStats:{'共鸣值':64, '种类':"锤"}},
     // ===== 雷 =====
     {id:'lei-green-001', name:'雷灵珠', attribute:'雷', quality:'绿', cells:[[0,0]],
