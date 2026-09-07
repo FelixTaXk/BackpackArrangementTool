@@ -1,4 +1,4 @@
-// solver.js —— 求解编排：物品准备/Worker 生命周期/心跳状态/取消/比较/求解入口。加载顺序 11/13，依赖 solver-worker、state、utils、talisman-model。
+// solver.js —— 求解编排：物品准备/Worker 生命周期/心跳状态/取消/比较/求解入口。加载顺序 14/19，依赖 state、utils、talisman-model。
 'use strict';
 
 function getParallelWorkerLimit(){
@@ -34,6 +34,7 @@ function prepareInventoryItems(){
       area: inv.cells.length,
       quality: inv.quality,
       attribute: inv.attribute,
+      causesDamage: !!(inv.causesDamage),
       value: Math.max(0, Number(inv.value)||0),
       // 分项基础值与加成率数组（按 bonusStats 顺序），供求器计算分项加成与 statTotals。
       stats: statIds.map(k=>Math.max(0, Number((inv.baseStats || {})[k])||0)),
@@ -70,7 +71,7 @@ function prepareInventoryItems(){
           if(ok && !placeMap.has(maskDec)){
             placeMap.set(maskDec, {
               mask:maskDec, cells:abs, uid:base.uid, no:base.no, itemName:base.name, typeName:base.typeName,
-              area:base.area, quality:base.quality, value:base.value, stats:base.stats, rates:base.rates, bonusKind:base.bonusKind, attribute:base.attribute, priorityTier:base.priorityTier, customPriority:base.customPriority, manualOrder:-1, itemIndex:-1
+              area:base.area, quality:base.quality, value:base.value, stats:base.stats, rates:base.rates, bonusKind:base.bonusKind, attribute:base.attribute, causesDamage:base.causesDamage, priorityTier:base.priorityTier, customPriority:base.customPriority, manualOrder:-1, itemIndex:-1
             });
           }
         }
@@ -171,8 +172,8 @@ function updateSolverStatusFromMessage(msg,activeCells){
     restarts:msg.restarts ?? solverStatusState.restarts,
     lastReportAt:performance.now()
   });
-  // SA 实时行（期 3，条件渲染）：仅当消息带 SA 键时记录；legacy/fast 会话消息不带
-  // SA 键，solverStatusState.sa 恒为 undefined，渲染时整行不出现，输出逐字不变。
+  // SA 实时行（期 3，条件渲染）：仅当消息带 SA 键时记录；无 SA 键时
+  // solverStatusState.sa 恒为 undefined，渲染时整行不出现，输出逐字不变。
   if(msg.saTemp !== undefined || msg.saAcceptRate !== undefined || msg.saItersPerSec !== undefined){
     const prev = solverStatusState.sa || {};
     solverStatusState.sa = {
@@ -239,7 +240,7 @@ function compareSolverBest(a,b){
 //   （非法值整体回退默认全 1）。清空/空白视为非法回退，非「0」；上限 1e6 防极端权重使
 //   计分溢出 Infinity（比较链 Infinity-Infinity=NaN 退化）；
 // - 三项精确 ===1 → null（默认 ≡ 现状：闸门整段不执行，原值原样流转，禁止“重算出相同值”路径——
-//   浮点重算会污染 legacy 哈希种子 solver-worker.js L25/L56，改变 RNG 序列）；
+//   浮点重算会污染引擎哈希种子，改变 RNG 序列）；
 // - 否则返回原始数组 [wAtk, wDef, wHp]。
 function readWeightMul(){
   // 权重口径首判：默认口径 ≡ 全 1，直接 return null（改写块/口径行/settings 键全不执行）；仅自定义口径才读八 input。
@@ -254,7 +255,7 @@ function readWeightMul(){
     if(!Number.isFinite(v) || v < 0 || v > 1e6) return null;
     weightMul.push(v);
   }
-  // 八维权重全部为 1 → 默认 ≡ 全 1，return null（禁止浮点重算路径，避免污染 legacy 哈希种子改变 RNG 序列）。
+  // 八维权重全部为 1 → 默认 ≡ 全 1，return null（禁止浮点重算路径，避免污染哈希种子改变 RNG 序列）。
   if(weightMul.length > 0 && weightMul.every(w => w === 1)) return null;
   return weightMul;
 }
@@ -370,11 +371,11 @@ function solveAndRender(){
   // 属性权重（方案A）：搜索目标 total = Σ base_k·w_k + Σ bonus_k·w_k（权重同时作用于基础与加成：
   // 基础经 value 双层改写，加成经下方 rates 缩放由 worker 目标函数自动吃到）；展示侧按真实加成率重算。
   // RNG 闸门：weightMul 仅 readWeightMul() 非 null（非全 1/非回退/合法）时进入本块；全 1 时整段不执行，
-  // 原值原样流转（禁止浮点重算路径，避免污染 legacy 哈希种子 solver-worker.js L25/L56 改变 RNG 序列）。
+  // 原值原样流转（禁止浮点重算路径，避免污染哈希种子改变 RNG 序列）。
   const weightMul = readWeightMul();
   if(weightMul){
     // 同一次循环双层同步改写：placement.value 是独立标量拷贝，不会自动跟随 item.value；
-    // legacy worker baseScore 吃 placement.value，SA 经 serialItems 吃 item.value，两层必须同值；
+    // worker baseScore 吃 placement.value，SA 经 serialItems 吃 item.value，两层必须同值；
     // 禁止对两层分别调用 scoreWeightedTotal（同一标量只算一次）。skipped 项不改（items 仅含 prepared）。
     items.forEach(t=>{
       const wv = scoreWeightedTotal(t.stats, weightMul);
@@ -383,8 +384,8 @@ function solveAndRender(){
     });
     // 加成加权：rates 随权重缩放（rates 为 items 与 placements 共享引用，一次覆盖；仅 prepared
     // 副本受影响，inventory 原始对象不动，同聚焦置零先例）。组合语义：聚焦置零在前、缩放在后，
-    // 非聚焦属性先置 0 再缩放仍为 0。缩放后 legacy sumRatesProduct / SA pairBonusTable 的加成项
-    // 自动成为 Σ bonus_k×w_k，冻结 worker 零改动。权重向量短于属性数时缺位按 0（该属性加成不计价）。
+    // 非聚焦属性先置 0 再缩放仍为 0。缩放后 pairBonusTable 的加成项
+    // 自动成为 Σ bonus_k×w_k，worker 零改动。权重向量短于属性数时缺位按 0（该属性加成不计价）。
     items.forEach(t=>{ t.rates.forEach((_,k)=>{ const w = weightMul[k]; t.rates[k] *= Number.isFinite(w) ? w : 0; }); });
   }
   const {lo:activeLo, hi:activeHi, count:activeCells} = buildActiveMask();
@@ -392,10 +393,7 @@ function solveAndRender(){
   if(inventory.length===0){ alert('请先从法宝库添加已有法宝。'); return; }
   if(items.length===0){ alert('已有物品都无法放入当前空间。请调整空间、旋转/镜像设置或物品清单。'); return; }
   const searchMode=document.getElementById('searchMode').value;
-  // 求解引擎：DOM 取值缺省 auto（统一新引擎默认档）；engineMode 仅 auto/hybrid（legacy 档已从界面移除，
-  // 见 index.html / engine-orchestrator.js）。fast 档同样走 SA 引擎（仅节点/时间上限被收紧，见 engOrchCreateWorkers）。
-  // 老存档兼容（保守）：persistence 读档 legacy 值迁移为 auto（统一新引擎），已存 auto/hybrid 跟随存档。
-  const engineMode=(document.getElementById('engineMode') && document.getElementById('engineMode').value) || 'auto';
+  // 求解引擎统一为 SA（老 DFS 引擎已退役并删除）；fast 档同样走 SA（仅节点/时间上限被收紧，见 engOrchCreateWorkers）。
   const requestedNodeLimit = Math.max(1000, Number(document.getElementById('nodeLimit').value)||2500000);
   const requestedTimeLimit = Math.max(100, Number(document.getElementById('timeLimit').value)||20000);
   const nodeLimit=searchMode==='fast'?Math.min(requestedNodeLimit,350000):requestedNodeLimit;
@@ -415,7 +413,7 @@ function solveAndRender(){
   }));
   const totalSearchArea = inventory.reduce((sum,x)=>sum+(x.cells?.length||0),0);
   const totalSearchBase = inventory.reduce((sum,x)=>sum+Math.max(0,Number(x.value)||0),0);
-  // Worker 启动负载：legacy 档原样走现有 postMessage；SA 档由 orchestrator 构建模型与 init
+  // Worker 启动负载：由 orchestrator 构建 SoA 模型与 init
   const workerPayload={
     items:serialItems,
     activeMask:maskToDec(activeLo, activeHi), activeCells, W, H, nodeLimit, timeLimit, useBonus,
@@ -430,7 +428,7 @@ function solveAndRender(){
   };
   // 加成聚焦键仅聚焦非空时追加（只加法；未聚焦时 payload 逐字节不变）。
   if(focusAttr) workerPayload.focusAttr = focusAttr;
-  solverWorkers=engOrchCreateWorkers({engineMode, searchMode, workerCount, payload:workerPayload});
+  solverWorkers=engOrchCreateWorkers({searchMode, workerCount, payload:workerPayload});
   solverWorker=solverWorkers[0];
   setSolverRunning(true);
   startSolverStatusHeartbeat(activeCells, inventory.length);
@@ -482,7 +480,7 @@ ${weightMul ? `属性权重：${formatWeightVector(weightMul)}（搜索目标 to
       inventory:inventory.map(x=>({...x,cells:cloneCells(x.cells)})),
       settings:{useAdjacencyBonus:useBonus,searchMode,parallelSearch:parallel,workerCount,optimizationOrder:['complete_loading','actual_total_score','manual_priority_neighbors','default_priority_neighbors','total_adjacency_count'],statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>({id:s.id,name:s.name})),manualPriorityRule:'1 is highest; blank uses default rules',assignmentStrategy:'geometry_then_item_assignment',focusAttr},
       skipped:skipped.map(x=>({no:x.no,name:x.name,area:x.area,value:x.value})),manualItems,
-      solverMeta:{fullPackingAttempted:meta.fullPackingAttempted,fullPackingFound:meta.fullPackingFound,fullSearchCutoff:meta.fullSearchCutoff,optimizationCutoff:meta.optimizationCutoff,fallbackCutoff:meta.fallbackCutoff,totalArea:meta.totalArea,totalBase:meta.totalBase,totalItems:meta.totalItems,fullGroupCount:meta.fullGroupCount,detailedGroupCount:meta.detailedGroupCount,assignmentStrategy:meta.assignmentStrategy,singletonDeferredCount:meta.singletonDeferredCount,assignmentChecks:meta.assignmentChecks,workerCount,engine:meta.engine||'dfs'}
+      solverMeta:{fullPackingAttempted:meta.fullPackingAttempted,fullPackingFound:meta.fullPackingFound,fullSearchCutoff:meta.fullSearchCutoff,optimizationCutoff:meta.optimizationCutoff,fallbackCutoff:meta.fallbackCutoff,totalArea:meta.totalArea,totalBase:meta.totalBase,totalItems:meta.totalItems,fullGroupCount:meta.fullGroupCount,detailedGroupCount:meta.detailedGroupCount,assignmentStrategy:meta.assignmentStrategy,singletonDeferredCount:meta.singletonDeferredCount,assignmentChecks:meta.assignmentChecks,workerCount,engine:meta.engine||'sa'}
     };
     solverWorkers=[]; solverWorker=null; stopSolverStatusHeartbeat(); setSolverRunning(false);
     // 属性权重键仅权重激活时追加（只加法；默认全 1 时不出现，同 focusAttr 条件追加先例）。
@@ -495,14 +493,13 @@ ${weightMul ? `属性权重：${formatWeightVector(weightMul)}（搜索目标 to
     // 同样已被缩放（无事件但清单率文本仍失真），故不附加 useBonus 条件。
     if(weightMul && !focusAttr) rebuildTruePlacementList(best);
     // SA 终态摘要（期 3）：renderStats 冻结不可改，此处条件追加。仅 SA 参与过的会话
-    // engOrchSaSummary 返回非 null；legacy/fast 会话恒 null，statusBox 输出逐字不变。
+    // engOrchSaSummary 返回非 null；无会话恒 null，statusBox 输出逐字不变。
     const saSummary = (typeof engOrchSaSummary === 'function') ? engOrchSaSummary() : null;
     if(saSummary){
       const top3 = Array.isArray(saSummary.opTop3) ? saSummary.opTop3.map(o => `${o.name}(${Number(o.w || 0).toFixed(2)})`).join('、') : '-';
-      // 期 3 评审修复：回火态三态渲染（SAB 直连 / broker / 未启用），不再对单 SA 谎报回火通道
+      // 回火态三态渲染（SAB 直连 / broker / 未启用），不再对单 SA 谎报回火通道
       const temperingText = saSummary.tempering ? (saSummary.sabMode ? '（SAB 直连回火通道）' : '（主线程 broker 回火）') : '（未启用回火（单 SA））';
-      // 任务 7：显示完整构成（auto 档 = 1 DFS + N SA；hybrid 档全 SA）而非仅 SA 数
-      const composeText = saSummary.dfsCount > 0 ? `${saSummary.dfsCount} DFS + ${saSummary.workerCount} SA` : `${saSummary.workerCount} SA`;
+      const composeText = `${saSummary.workerCount} SA`;
       document.getElementById('statusBox').textContent += `\n\n模拟退火（SA）摘要：${composeText} Worker 参与${temperingText}
 末次温度：${Number(saSummary.temp ?? 0).toPrecision(4)}，末次接受率：${((Number(saSummary.acceptRate) || 0) * 100).toFixed(1)}%，迭代速率：${((Number(saSummary.itersPerSec) || 0) / 10000).toFixed(1)} 万/秒，重热次数：${Number(saSummary.restarts) || 0}
 算子权重 Top3：${top3}（lnsSmall/lnsBig 默认关闭，权重非零不代表已执行）`;
@@ -523,7 +520,7 @@ ${weightMul ? `属性权重：${formatWeightVector(weightMul)}（搜索目标 to
   const sessionWorkers=solverWorkers;
   watchdogTimer=setTimeout(function(){
     if(!solverWorker || solverWorkers!==sessionWorkers) return;
-    // 从未收到任何 incumbent 时构造空解兼兼容后续渲染/真实重算路径（形状同 legacy 初始 best）。
+    // 从未收到任何 incumbent 时构造空解兼兼容后续渲染/真实重算路径（形状同初始 best）。
     const emptyBest={
       complete:false, baseScore:-1, bonusScore:0, totalScore:-1, area:0, itemCount:0, adjacencyCount:0,
       manualPriorityVector:new Array(manualPriorityLevels.length).fill(0), defaultPriorityVector:new Array(DEFAULT_TIER_COUNT).fill(0),
@@ -547,7 +544,6 @@ ${weightMul ? `属性权重：${formatWeightVector(weightMul)}（搜索目标 to
     // 新引擎消息接入：进入现有分支前完成契约转换（现有分支逻辑零改动）
     if(msg.type === 'swap-req'){ engOrchHandleSwapReq(worker, msg); return; }
     if(msg.type === 'incumbent-lite'){ const rebuilt = engOrchConvertIncumbentLite(worker, msg); if(!rebuilt) return; msg = rebuilt; }
-    if(msg.type === 'incumbent') engOrchOnDfsIncumbent(worker, msg);
     if(msg.type === 'progress'){
       engOrchNoteProgress(worker, msg);
       updateSolverStatusFromMessage({...msg,nodes:totalNodes+(Number(msg.nodes)||0),stage:`Worker ${workerIndex+1}/${workerCount}：${msg.stage||'搜索中'}`},activeCells);
@@ -557,7 +553,7 @@ ${weightMul ? `属性权重：${formatWeightVector(weightMul)}（搜索目标 to
       if(compareSolverBest(msg.best,globalBest)>0){
         globalBest=msg.best; renderResultGrid(msg.best);
         // 实时真实渲染（节流 ≥200ms）：incumbent 晋升即刷新「实际总属性」横幅与分项统计。
-        // legacy onmessage 与 SA orchestrator（incumbent-lite→incumbent）两路径在此汇合，单点覆盖。
+        // SA orchestrator（incumbent-lite→incumbent）单点覆盖。
         // 权重口径：对浅拷贝覆盖真实重算字段（msg.best 原件保持加权口径，继续参与后续比较）；
         // 未勾选百分比加成时同走覆盖（仅基础分项），默认口径（weightMul null）worker 值即真实值，
         // 直接渲染无需重算。renderStats 走现有
@@ -594,8 +590,7 @@ ${weightMul ? `属性权重：${formatWeightVector(weightMul)}（搜索目标 to
     cleanupSolverWorker();
     document.getElementById('statusBox').textContent = `计算失败：${message}`;
   };
-  if(worker._engineKind === 'sa') return; // SA Worker 已在创建时由 orchestrator 发送 init 负载
-  worker.postMessage({...workerPayload, seedOffset:Math.imul(workerIndex+1,0x85ebca6b)});
+  // SA Worker 已在创建时由 orchestrator 发送 init 负载，无需再发启动消息
   });
 }
 

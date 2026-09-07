@@ -4,10 +4,6 @@
 //
 // 分节：
 //   O1  位板掩码 BigInt → 双 Uint32（行为中性）
-//   O2  engine-encoding pairBonusTable 去装箱（数值等价）
-//   P1  双重优先级（品质红最高 × 5 格最高）
-//   P2  全部加成项计入目标函数（加成率直接计价）
-//   P3  引擎档位统一（legacy 废弃）
 //   SS  score-shared 内置自测
 
 import { loadLogicLayer, makeAsserter } from './test-harness.mjs';

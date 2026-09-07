@@ -1,11 +1,9 @@
-// engine-orchestrator.js —— “超越版求解引擎”主线程集成编排（期 0+1）。加载顺序 12/13，依赖 score-shared、engine-encoding、engine-worker，先于 solver.js。
+// engine-orchestrator.js —— “超越版求解引擎”主线程集成编排。加载顺序 13/19，依赖 score-shared、engine-encoding、engine-worker，先于 solver.js。
 'use strict';
 // ============================================================================
 // 职责：
-//   1. engOrchCreateWorkers：按 engineMode × 搜索档位组合 Portfolio：
-//      - legacy 档（仅老存档保守保留，界面已移除）：全部 createSolverWorker（与现状逐字等价）；
-//      - hybrid / auto 档（fast 与 deep 均走 SA）：全部 createEngineWorker，或 auto 的 1 个 DFS 种子源 + K-1 个 SA；
-//      - 快速档不再强制 legacy（见下方 useSa），仅节点/时间上限收紧。
+//   1. engOrchCreateWorkers：按搜索档位组合 Portfolio——全部 createEngineWorker（纯 SA，
+//      老 DFS 引擎已退役并删除），K 个 SA Worker 并行，回火交换取各成员最佳。
 //      返回数组直接进 solverWorkers（cleanup/cancel/onerror 零改动覆盖），每个 Worker 带 _blobUrl。
 //   2. 回火 broker：engOrchHandleSwapReq——相邻温度对 (i,i+1) 奇偶轮转，
 //      Metropolis 准则 min(1, exp((βk-βk+1)(Ek+1-Ek))) 决定是否交换解。
@@ -13,10 +11,10 @@
 //      期 2 收口：init meta 恒带 lnsEnabled（缺省 false 即 LNS 关闭），
 //      隐藏开关 window.__ENGINE_LNS_ON__ = true 时置 true（同风格）。
 //   3. 契约转换：SA Worker 的 incumbent-lite / done 消息经 encRebuildBest 全算重建，
-//      包装成与旧引擎逐字段一致的消息后交给现有消息循环（incumbent/done 分支零改动）。
+//      包装成标准 incumbent/done 消息后交给现有消息循环（incumbent/done 分支零改动）。
 // ============================================================================
 
-// 单次求解会话的编排状态（legacy/fast 档为 null，全部 hook 自动退化为无操作）
+// 单次求解会话的编排状态（无会话时为 null，全部 hook 自动退化为无操作）
 var engOrchState = null;
 
 // ----------------------------------------------------------------------------
@@ -32,22 +30,14 @@ function engOrchSabAvailable(){
 
 // ----------------------------------------------------------------------------
 // Portfolio 路由与 SA Worker 初始化
-// opts = {engineMode, searchMode, workerCount, payload}
-// payload 即旧版 Worker 启动负载（items/activeMask/W/H/limits/统计与清单口径等），
-// legacy 档下原样走现有 postMessage；SA 档下用于主线程构建 SoA 模型与 bundle。
+// opts = {searchMode, workerCount, payload}
+// payload 为 Worker 启动负载（items/activeMask/W/H/limits/统计与清单口径等），
+// 用于主线程构建 SoA 模型与 bundle；全部走 SA 引擎（老 DFS 已退役）。
 // ----------------------------------------------------------------------------
 function engOrchCreateWorkers(opts){
-  const engineMode = opts.engineMode === 'hybrid' || opts.engineMode === 'auto' ? opts.engineMode : 'legacy';
   const searchMode = opts.searchMode === 'fast' ? 'fast' : 'deep';
   const K = Math.max(1, Math.floor(Number(opts.workerCount) || 1));
   const payload = opts.payload;
-  // 统一新引擎：legacy 仅老存档保守保留；auto/hybrid（含 fast 档）一律走 SA。
-  // 快速档不再强制 legacy（仅节点/时间上限在 solver.js 处收紧），故 useSa 与 searchMode 无关。
-  const useSa = engineMode !== 'legacy';
-  if(!useSa){
-    engOrchState = null;
-    return Array.from({length:K}, () => createSolverWorker());
-  }
   // 主线程一次性构建 SoA 模型 + bundle（encBuildModel 内部允许 BigInt，仅构建期）
   const model = encBuildModel(payload.items, payload.activeMask, payload.W, payload.H, {
     statKeys: payload.statKeys, statCount: payload.statCount,
@@ -55,7 +45,7 @@ function engOrchCreateWorkers(opts){
     useBonus: payload.useBonus
   });
   const bundle = encBuildBundle(model);
-  // complete 语义对齐旧引擎：已放件数 + skippedCount === requiredTotalItems
+  // complete 语义：已放件数 + skippedCount === requiredTotalItems
   const requiredTotalItems = Math.max(0, Number(payload.requiredTotalItems) || 0);
   const skippedCount = Math.max(0, Number(payload.skippedCount) || 0);
   const ctx = {
@@ -66,7 +56,7 @@ function engOrchCreateWorkers(opts){
     requiredTotalItems, skippedCount,
     requiredTotalArea: payload.requiredTotalArea, requiredTotalBase: payload.requiredTotalBase
   };
-  const saCount = engineMode === 'hybrid' ? K : Math.max(0, K - 1);
+  const saCount = K; // 纯 SA：K 个 SA Worker 并行
   const temperingOn = !window.__ENGINE_TEMPERING_OFF__ && saCount >= 2;
   // SAB 增强档（期 3）：回火开启且 crossOriginIsolated 时建立 SAB 直连通道（固定槽位+
   // 序列号+Atomics 发布屏障，无 wait/notify，主循环每 2048 迭代轮询），替代 broker 的
@@ -79,22 +69,9 @@ function engOrchCreateWorkers(opts){
       sabMode = true;
     }catch(e){ sab = null; sabMode = false; } // SAB 初始化失败：照常走 broker
   }
-  // 预计算：uid→物品下标、每物品 mask 串→全局摆放下标（DFS 种子映射与分组计数用）
-  const uidIndex = new Map();
-  const plIndex = [];
-  let pOff = 0;
-  payload.items.forEach((t, i) => {
-    uidIndex.set(t.uid, i);
-    const m = new Map();
-    t.placements.forEach((p, j) => { m.set(String(p.mask), pOff + j); });
-    plIndex.push(m);
-    pOff += t.placements.length;
-  });
   engOrchState = {
-    engineMode, model, ctx,
-    serialItems: payload.items,
+    model, ctx,
     groupCounts: engOrchGroupCounts(payload.items),
-    uidIndex, plIndex,
     workers: new Map(),   // worker → {kind, tempIndex, E, nodes, elapsed}
     byTemp: new Map(),    // tempIndex → worker
     saWorkers: [],
@@ -104,8 +81,7 @@ function engOrchCreateWorkers(opts){
     temperingOn,          // 期 3 评审修复：实际回火启用态（saCount>=2 且未被隐藏开关禁用），摘要三态用
     saLast: null          // 期 3：最近一次 SA progress 摘要（终态 statusBox 追加用）
   };
-  const workers = [];
-  for(let n = 0; n < K - saCount; n++) workers.push(createSolverWorker()); // auto 的 DFS 成员（下标 0）
+  const workers = []; // 全部为 SA Worker
   for(let n = 0; n < saCount; n++){
     const w = createEngineWorker();
     w._engineKind = 'sa';
@@ -114,7 +90,7 @@ function engOrchCreateWorkers(opts){
     const initMsg = {
       type: 'init', buffer: buf, offsets: bundle.offsets,
       meta: {
-        seedOffset: Math.imul(workers.length + 1, 0x85ebca6b), // 与旧 seedOffset 同式，随最终下标唯一
+        seedOffset: Math.imul(workers.length + 1, 0x85ebca6b), // 随最终下标唯一的随机种子
         nodeLimit: payload.nodeLimit, timeLimit: payload.timeLimit, useBonus: payload.useBonus,
         requiredTotalItems, requiredTotalArea: payload.requiredTotalArea,
         requiredTotalBase: payload.requiredTotalBase, skippedCount,
@@ -130,9 +106,8 @@ function engOrchCreateWorkers(opts){
     engOrchState.saWorkers.push(w);
   }
   for(const w of workers){
-    const kind = w._engineKind === 'sa' ? 'sa' : 'dfs';
-    engOrchState.workers.set(w, {kind, tempIndex: kind === 'sa' ? w._tempIndex : -1, E: null, nodes: 0, elapsed: 0});
-    if(kind === 'sa') engOrchState.byTemp.set(w._tempIndex, w);
+    engOrchState.workers.set(w, {kind:'sa', tempIndex: w._tempIndex, E: null, nodes: 0, elapsed: 0});
+    engOrchState.byTemp.set(w._tempIndex, w);
   }
   return workers;
 }
@@ -199,7 +174,7 @@ function engOrchBeta(k){
 // 用主线程 SoA 模型的 CSR 邻接对表现场重算（每件物品至多一个摆放在放，摆放对↔物品对双射）。
 function engOrchEnergyOf(sol){
   const m = engOrchState.model, ctx = engOrchState.ctx;
-  let base = 0, area = 0, items = 0, bonus = 0, manW = 0, defW = 0, adj = 0;
+  let base = 0, area = 0, items = 0, bonus = 0, manW = 0, defW = 0, dmg = 0, adj = 0;
   const placedPl = [];
   for(let i = 0; i < m.I; i++){
     const p = sol[i];
@@ -220,16 +195,18 @@ function engOrchEnergyOf(sol){
       if(m.useBonus) bonus += m.adjBonus[e];
       manW += m.adjManW[e];
       defW += m.adjDefW[e];
+      dmg += m.adjDmg ? m.adjDmg[e] : 0; // 伤害贴邻 bond 计数（对称 CSR，无序对一次）
     }
   }
   const complete = items + ctx.skippedCount === ctx.requiredTotalItems;
-  return engOrchScalar(complete, base, ctx.useBonus ? bonus : 0, manW, defW, adj, items, area);
+  return engOrchScalar(complete, base, ctx.useBonus ? bonus : 0, manW, defW, dmg, adj, items, area);
 }
 
-// 与 Worker 侧 ewScalarOf 逐字一致的能量标量
-function engOrchScalar(c, base, bonus, manW, defW, adj, items, area){
+// 与 Worker 侧 ewScalarOf 逐字一致的能量标量（dmg = 伤害贴邻 bond 数，取 1e2 弱于任一默认档位边 1e5，
+// 使 bond 仅在各档位加权相等后破平——近似 Worker 侧 ewBetterLex 的 dmg 项，见 worker 注释）
+function engOrchScalar(c, base, bonus, manW, defW, dmg, adj, items, area){
   const total = base + bonus;
-  return -((c ? 1e12 : 0) + total + 1e8 * manW + 1e5 * defW + 10 * adj + items + 1e-3 * area);
+  return -((c ? 1e12 : 0) + total + 1e8 * manW + 1e5 * defW + 1e2 * dmg + 10 * adj + items + 1e-3 * area);
 }
 
 // ----------------------------------------------------------------------------
@@ -261,7 +238,7 @@ function engOrchConvertIncumbentLite(worker, msg){
   };
 }
 
-// 由重建 best 反推能量（与 Worker 能量式一致；权重公式与旧 priorityGainFor 相同）
+// 由重建 best 反推能量（与 Worker 能量式一致；优先级权重公式见 score-shared）
 function engOrchEnergyFromBest(best){
   const ctx = engOrchState.ctx;
   let manW = 0, defW = 0;
@@ -269,26 +246,27 @@ function engOrchEnergyFromBest(best){
   for(let i = 0; i < mv.length; i++) manW += (mv[i] || 0) * Math.max(1, mv.length - i) * 1e8;
   const dv = best.defaultPriorityVector || [];
   for(let i = 0; i < dv.length; i++) defW += (dv[i] || 0) * Math.max(1, dv.length - i) * 1e5;
+  const dmg = Number(best.damageBondCount) || 0; // 伤害贴邻 bond（encRebuildBest 经 scoreEvaluateConcrete 已计）
   return engOrchScalar(!!best.complete, best.baseScore, ctx.useBonus ? best.bonusScore : 0,
-    manW, defW, best.adjacencyCount || 0, best.itemCount || 0, best.area || 0);
+    manW, defW, dmg, best.adjacencyCount || 0, best.itemCount || 0, best.area || 0);
 }
 
-// placements 项字段与旧引擎 instantiate+serializeBest 逐字段对齐（剔除内部 lo/hi 视图键，补 geometryGroupIndex）
+// placements 项字段序列化（剔除内部 lo/hi 视图键，补 geometryGroupIndex）
 function engOrchCanonicalPlacement(p){
   return {
     mask: p.mask, neighborMask: p.neighborMask, cells: p.cells,
     uid: p.uid, no: p.no, itemName: p.itemName, typeName: p.typeName,
     area: p.area, quality: p.quality, value: p.value,
     stats: p.stats, rates: p.rates, sv: p.sv, rv: p.rv,
-    bonusKind: p.bonusKind, attribute: p.attribute, priorityTier: p.priorityTier, customPriority: p.customPriority,
+    bonusKind: p.bonusKind, attribute: p.attribute, causesDamage: !!p.causesDamage, priorityTier: p.priorityTier, customPriority: p.customPriority,
     manualOrder: p.manualOrder, itemIndex: p.itemIndex,
     geometryGroupIndex: p.geometryGroupIndex ?? null, placementIndex: p.placementIndex
   };
 }
 
 // ----------------------------------------------------------------------------
-// 契约转换：SA done → 旧 done 消息（缺完整 best 时用 encRebuildBest 补齐；
-// fullGroupCount/detailedGroupCount 用与旧分组键逐字一致的口径主线程补齐）
+// 契约转换：SA done → 标准 done 消息（缺完整 best 时用 encRebuildBest 补齐；
+// fullGroupCount/detailedGroupCount 由主线程 engOrchGroupCounts 补齐）
 // ----------------------------------------------------------------------------
 function engOrchConvertDone(worker, msg){
   if(!engOrchState || !worker || worker._engineKind !== 'sa') return msg;
@@ -324,8 +302,7 @@ function engOrchConvertDone(worker, msg){
   };
 }
 
-// 分组计数：键式与旧 geometryGroupKey/detailedGroupKey 逐字一致（mask 十进制串字典序排序）；
-// 同属性守卫生效后 detailed 签名含 attribute（与 solver-worker.js detailedGroupKey 同步）。
+// 分组计数：full 键（几何分组）与 detailed 键（含属性/品质签名）统计（mask 十进制串字典序排序）。
 function engOrchGroupCounts(serialItems){
   const sig = t => `${t.value}|${t.bonusKind}|${(t.stats || []).join(',')}|${(t.rates || []).join(',')}`;
   const fullKeys = new Set(), detailedKeys = new Set();
@@ -347,9 +324,8 @@ function engOrchNoteProgress(worker, msg){
   if(!rec) return;
   rec.nodes = Number(msg.nodes) || rec.nodes;
   rec.elapsed = Number(msg.elapsed) || rec.elapsed;
-  // 冻结契约键集对齐（只加法）：legacy progress 消息带 fullPackingFound 键
-  // （solver-worker reportProgress 的 extra），SA 侧 progress 缺该键且直通 UI；
-  // 此处就地补齐 bestComplete（与 SA complete 语义同口径），不删改任何现有键。
+  // 进度消息补齐 fullPackingFound 键（SA progress 缺该键且直通 UI；此处就地按 bestComplete 补齐，
+  // 与 SA complete 语义同口径，不删改任何现有键）。
   if(rec.kind === 'sa' && msg && msg.fullPackingFound === undefined){
     msg.fullPackingFound = !!msg.bestComplete;
   }
@@ -367,19 +343,17 @@ function engOrchNoteProgress(worker, msg){
 }
 
 // ----------------------------------------------------------------------------
-// 期 3：SA 终态摘要。solver.js finishWorker 在 renderStats（冻结）之后调用，
+// 期 3：SA 终态摘要。solver.js finishWorker 在 renderStats 之后调用，
 // 非 null 时向 statusBox.textContent 条件追加。仅 SA 参与过且上报过 progress 的
-// 会话返回非 null；legacy/fast 会话恒 null，statusBox 输出逐字不变。
+// 会话返回非 null；无会话恒 null，statusBox 输出逐字不变。
 // ----------------------------------------------------------------------------
 function engOrchSaSummary(){
   if(!engOrchState || !engOrchState.saWorkers || !engOrchState.saWorkers.length) return null;
   if(!engOrchState.saLast) return null;
   return {
     workerCount: engOrchState.saWorkers.length,
-    // 任务 7：终态摘要展示完整构成（auto 档 = 1 DFS + N SA；hybrid 档 dfsCount=0）
-    dfsCount: [...engOrchState.workers.values()].filter(r => r.kind === 'dfs').length,
     sabMode: !!engOrchState.sabMode,
-    // 期 3 评审修复：透传实际回火态（saCount=1 时 temperingOn=false 从未交换，
+    // 透传实际回火态（saCount=1 时 temperingOn=false 从未交换，
     // 展示层据此渲染「未启用回火（单 SA）」而非谎报 broker/SAB）
     tempering: engOrchState.saWorkers.length >= 2 && !!engOrchState.temperingOn,
     temp: engOrchState.saLast.temp,
@@ -390,28 +364,6 @@ function engOrchSaSummary(){
   };
 }
 
-// ----------------------------------------------------------------------------
-// auto 档种子源：DFS 成员的 incumbent 映射为 solPl 播种全部 SA Worker。
-// 仅对 legacy（DFS）Worker 的 incumbent 生效；SA 重建的 incumbent 自动跳过。
-// ----------------------------------------------------------------------------
-function engOrchOnDfsIncumbent(worker, msg){
-  if(!engOrchState || !engOrchState.saWorkers.length) return;
-  if(!worker || worker._engineKind === 'sa') return;
-  const best = msg && msg.best;
-  if(!best || !Array.isArray(best.placements) || !best.placements.length) return;
-  const sol = new Int32Array(engOrchState.model.I).fill(-1);
-  for(const p of best.placements){
-    let i = Number.isInteger(p.itemIndex) && p.itemIndex >= 0 ? p.itemIndex : engOrchState.uidIndex.get(p.uid);
-    if(i === undefined || i < 0 || i >= engOrchState.model.I) continue;
-    const gi = engOrchState.plIndex[i].get(String(p.mask));
-    if(gi !== undefined) sol[i] = gi;
-  }
-  for(const w of engOrchState.saWorkers){
-    const copy = new Int32Array(sol);
-    w.postMessage({type:'seed', sol: copy}, [copy.buffer]);
-  }
-}
-
 if(typeof window !== 'undefined'){
   window.engOrchCreateWorkers = engOrchCreateWorkers;
   window.engOrchHandleSwapReq = engOrchHandleSwapReq;
@@ -420,7 +372,6 @@ if(typeof window !== 'undefined'){
   window.engOrchNoteProgress = engOrchNoteProgress;
   window.engOrchSaSummary = engOrchSaSummary;
   window.engOrchSabAvailable = engOrchSabAvailable;
-  window.engOrchOnDfsIncumbent = engOrchOnDfsIncumbent;
   window.engOrchEnergyOf = engOrchEnergyOf;
   window.engOrchGroupCounts = engOrchGroupCounts;
 }

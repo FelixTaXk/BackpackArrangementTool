@@ -1,4 +1,4 @@
-// ui-theme.js —— 期4主题装饰层（《我要当老祖》水墨修仙风）。加载顺序 12/14：位于 solver.js 之后、
+// ui-theme.js —— 主题装饰层（《我要当老祖》水墨修仙风）。加载顺序 15/19：位于 solver.js 之后、
 // persistence.js/app.js 之前。职责：
 // 1) 包装 renderResultGrid：ui-result.js 冻结不可改，渲染完成后按 best.placements 的 cells 坐标
 //    反推格子下标（r*W+c）补设 data-attr（保留属性反查，邪格黑底红字特化已于任务 #49 删除）与 data-quality

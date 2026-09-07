@@ -29,7 +29,7 @@ function encMaskToDec(lo, hi){
   return String(hi * 4294967296 + lo);
 }
 
-// 由 cellsFlat（r*W+c 索引）构建外圈邻接掩码 {lo,hi}（对齐旧 makeNeighborMask 语义：四方向外圈）
+// 由 cellsFlat（r*W+c 索引）构建外圈邻接掩码 {lo,hi}（四方向外圈）
 function encMakeNeighborLoHi(cellsFlat, W, H){
   let lo = 0, hi = 0;
   const set = idx => {
@@ -62,7 +62,7 @@ function encStatVec(v, K){
   return out;
 }
 
-// 单件物品的优先级加权贡献（权重公式与旧 L148-149 一致：1e8/1e5 × max(1,len-i)）
+// 单件物品的优先级加权贡献（手动 1e8×max(1,len-i)，默认 1e5×max(1,len-i)）
 function encPriorityWeight(manualOrder, priorityTier, manualCount, defaultTierCount){
   let w = 0;
   if(manualOrder >= 0 && manualOrder < manualCount) w += 100000000 * Math.max(1, manualCount - manualOrder);
@@ -102,6 +102,7 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
   const itemStats = new Float64Array(I * K);
   const itemRates = new Float64Array(I * K);
   const itemKind = new Uint8Array(I);          // 0=none 1=provider 2=self
+  const itemDmg = new Uint8Array(I);           // 1=造成伤害(causesDamage)，伤害贴邻 bond 守卫用
   const itemAttr = new Uint8Array(I);          // 属性字典下标（255=缺失）；同属性守卫用
   const itemManual = new Int16Array(I);        // manualOrder（-1 表示无）
   const itemTier = new Int8Array(I);           // priorityTier（-1 表示无）
@@ -117,6 +118,7 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
     const sv = encStatVec(t.stats, K), rv = encStatVec(t.rates, K);
     itemValue[i] = Number(t.value) || 0;
     itemKind[i] = encKindOf(t.bonusKind);
+    itemDmg[i] = !!t.causesDamage ? 1 : 0;
     // 属性：加成事件只在同属性法宝之间发生；存字典下标，缺失记 255
     let attrI = 255;
     if(t.attribute !== undefined && t.attribute !== null){
@@ -132,7 +134,7 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
     itemPlLen[i] = t.placements.length;
     itemMeta.push({
       no: t.no, uid: t.uid, itemName: t.name, typeName: t.typeName, quality: t.quality,
-      attribute: t.attribute,
+      attribute: t.attribute, causesDamage: !!t.causesDamage,
       cells: t.cells.map(c => c.slice()),
       stats: (t.stats || []).slice(), rates: (t.rates || []).slice(),
       customPriority: t.customPriority
@@ -221,7 +223,7 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
       nb.set(adjBuf.subarray(0, eFlat));
       adjBuf = nb;
     }
-    // 升序输出：线性扫描标记（O(P)，免逐行比较排序；与旧全对扫描遍历顺序一致，CSR 内容逐字不变）
+    // 升序输出：线性扫描标记（O(P)，免逐行比较排序）
     for(let b = 0; b < P; b++){
       if(candMark[b] === stampEpoch) adjBuf[eFlat++] = b;
     }
@@ -234,6 +236,15 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
   const adjBonus = new Float64Array(E);  // = scorePotentialPairBonus 精确值
   const adjManW = new Float64Array(E);   // 双向手动优先级加权和
   const adjDefW = new Float64Array(E);   // 双向默认优先级加权和
+  const adjDmg = new Uint8Array(E);      // 伤害贴邻 bond（同属性 + 一端加成一端伤害），0/1
+  const dmgOfItem = i => itemDmg[i] ? true : false;
+  // 与 worker 侧 isBond / score-shared scoreIsDamageBond 逐字同口径的 bond 守卫
+  const bondOf = (ai, aj) => {
+    if(itemAttr[ai] === 255 || itemAttr[aj] === 255 || itemAttr[ai] !== itemAttr[aj]) return false;
+    const aBonus = itemKind[ai] === 1 || itemKind[ai] === 2;
+    const bBonus = itemKind[aj] === 1 || itemKind[aj] === 2;
+    return (aBonus && dmgOfItem(aj)) || (bBonus && dmgOfItem(ai));
+  };
   // 物品对预计算：adjBonus/adjManW/adjDefW 只依赖物品对而非摆放对，
   // 预算 I×I 表后边循环仅查表（避免逐边调用 scorePotentialPairBonus）
   const tmpA = {sv:null, rv:null, bonusKind:'none', attribute:undefined}, tmpB = {sv:null, rv:null, bonusKind:'none', attribute:undefined};
@@ -269,11 +280,12 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
       adjBonus[e] = pairBonusJ[iaI + ib];
       adjManW[e] = mwA + itemMwJ[ib];  // 双向手动优先级加权和
       adjDefW[e] = dwA + itemDwJ[ib];  // 双向默认优先级加权和
+      adjDmg[e] = bondOf(ia, ib) ? 1 : 0; // 伤害贴邻 bond（同属性守卫）
       e++;
     }
   }
 
-  // globalMaxBonus：所有无序物品对 potential 之和（对齐旧 L242-245 语义，复用预计算表）
+  // globalMaxBonus：所有无序物品对 potential 之和（复用预计算表）
   let globalMaxBonus = 0;
   if(useBonus){
     for(let i = 0; i < I; i++){
@@ -287,9 +299,9 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
     statKeys: (opts.statKeys || []).slice(),
     activeMask, globalMaxBonus,
     plMask, plNbr, plItem, plArea, plCellsOff, plCellsLen, cellsFlat, plCellsXY,
-    itemValue, itemStats, itemRates, itemKind, itemAttr, itemManual, itemTier, itemPlOff, itemPlLen,
+    itemValue, itemStats, itemRates, itemKind, itemDmg, itemAttr, itemManual, itemTier, itemPlOff, itemPlLen,
     itemMeta, attributes: attrNames,
-    adjOff, adjPeer, adjBonus, adjManW, adjDefW
+    adjOff, adjPeer, adjBonus, adjManW, adjDefW, adjDmg
   };
 }
 
@@ -300,8 +312,8 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
 function encBundleTables(){
   return [
     'plMask', 'plNbr', 'plItem', 'plArea', 'plCellsOff', 'plCellsLen', 'cellsFlat', 'plCellsXY',
-    'itemValue', 'itemStats', 'itemRates', 'itemKind', 'itemAttr', 'itemManual', 'itemTier', 'itemPlOff', 'itemPlLen',
-    'adjOff', 'adjPeer', 'adjBonus', 'adjManW', 'adjDefW'
+    'itemValue', 'itemStats', 'itemRates', 'itemKind', 'itemDmg', 'itemAttr', 'itemManual', 'itemTier', 'itemPlOff', 'itemPlLen',
+    'adjOff', 'adjPeer', 'adjBonus', 'adjManW', 'adjDefW', 'adjDmg'
   ];
 }
 
@@ -352,9 +364,11 @@ function encDecodeBundle(buffer, offsets){
     plMask: Uint32Array, plNbr: Uint32Array, plItem: Uint16Array, plArea: Uint8Array,
     plCellsOff: Uint32Array, plCellsLen: Uint16Array, cellsFlat: Uint8Array, plCellsXY: Uint8Array,
     itemValue: Float64Array, itemStats: Float64Array, itemRates: Float64Array, itemKind: Uint8Array,
+    itemDmg: Uint8Array,
     itemAttr: Uint8Array,
     itemManual: Int16Array, itemTier: Int8Array, itemPlOff: Uint32Array, itemPlLen: Uint16Array,
-    adjOff: Uint32Array, adjPeer: Uint32Array, adjBonus: Float64Array, adjManW: Float64Array, adjDefW: Float64Array
+    adjOff: Uint32Array, adjPeer: Uint32Array, adjBonus: Float64Array, adjManW: Float64Array, adjDefW: Float64Array,
+    adjDmg: Uint8Array
   };
   for(const name of encBundleTables()){
     const meta = offsets[name];
@@ -366,7 +380,7 @@ function encDecodeBundle(buffer, offsets){
 // ----------------------------------------------------------------------------
 // encRebuildBest：晋级全算闸门（主线程实现）。
 // solPlInt32：Worker 回传的摆放下标数组（Int32Array）；从 SoA 模型全量重建 placements，
-// 经 scoreEvaluateConcrete 重算后 scoreSerializeBest 序列化，返回与旧版键集一致的 best。
+// 经 scoreEvaluateConcrete 重算后 scoreSerializeBest 序列化，返回键集固定的 best。
 // ctx = {statCount, useBonus, manualCount, defaultTierCount, totalItems(可选)}
 // ----------------------------------------------------------------------------
 function encRebuildBest(solPlInt32, model, ctx){
@@ -375,7 +389,7 @@ function encRebuildBest(solPlInt32, model, ctx){
   const placements = [];
   for(let s = 0; s < solPlInt32.length; s++){
     const p = solPlInt32[s];
-    if(p < 0) continue; // 未放件：与旧引擎口径一致（placements 只含已放件）
+    if(p < 0) continue; // 未放件（placements 只含已放件）
     const i = model.plItem[p];
     const meta = model.itemMeta[i];
     const cells = [];
@@ -385,7 +399,7 @@ function encRebuildBest(solPlInt32, model, ctx){
     const nbrLo = model.plNbr[p * model.L], nbrHi = model.L > 1 ? model.plNbr[p * model.L + 1] : 0;
     placements.push({
       no: meta.no, uid: meta.uid, itemName: meta.itemName, typeName: meta.typeName,
-      quality: meta.quality, attribute: meta.attribute, cells, area: model.plArea[p],
+      quality: meta.quality, attribute: meta.attribute, causesDamage: !!meta.causesDamage, cells, area: model.plArea[p],
       value: model.itemValue[i],
       stats: meta.stats.slice(), rates: meta.rates.slice(),
       sv: Array.from(model.itemStats.subarray(i * K, i * K + K)),
@@ -409,7 +423,7 @@ function encRebuildBest(solPlInt32, model, ctx){
     totalItems: ctx.totalItems !== undefined ? Number(ctx.totalItems) : model.I
   };
   const best = scoreEvaluateConcrete(placements, evalCtx);
-  // placements 项键集与 legacy 路径（solver-worker.js serializeBest）逐键一致：
+  // placements 项键集固定（mask/neighborMask/cells/… 全字段）：
   // 剔除 scoreViewOf 注入的内部视图键 lo/hi/nbrLo/nbrHi，补 geometryGroupIndex（SA 侧恒 null）
   best.placements = best.placements.map(p => ({
     mask: p.mask, neighborMask: p.neighborMask, cells: p.cells,
@@ -417,7 +431,7 @@ function encRebuildBest(solPlInt32, model, ctx){
     uid: p.uid, no: p.no, itemName: p.itemName, typeName: p.typeName,
     area: p.area, quality: p.quality, value: p.value,
     stats: p.stats, rates: p.rates, sv: p.sv, rv: p.rv,
-    bonusKind: p.bonusKind, attribute: p.attribute, priorityTier: p.priorityTier, customPriority: p.customPriority,
+    bonusKind: p.bonusKind, attribute: p.attribute, causesDamage: p.causesDamage, priorityTier: p.priorityTier, customPriority: p.customPriority,
     manualOrder: p.manualOrder,
     geometryGroupIndex: p.geometryGroupIndex ?? null
   }));

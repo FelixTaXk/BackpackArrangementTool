@@ -7,7 +7,7 @@
 //      无 DOM / 无全局状态依赖；后续会用 Function.toString() 拼装进 Blob Worker。
 //   2. 热路径禁用 BigInt：位板掩码一律使用双 Uint32 数值对 {lo,hi}（低 32 位 / 高位），
 //      42 位以内的板面（W*H<=42）序列化时用 String(hi*4294967296+lo) 精确转十进制。
-//   3. 评分语义与旧版 js/solver-worker.js 逐字一致：
+//   3. 评分语义统一：
 //      - 同属性守卫：加成事件只在同属性法宝之间发生（attribute 相等才产生 provider/self 事件）
 //      - provider：提升相邻同属性法宝，bonus = Σ 目标.stats[k] × 源.rates[k]/100
 //      - self：提升自己，bonus = Σ 自身.stats[k] × 自身.rates[k]/100（每相邻一个同属性法宝一次）
@@ -15,7 +15,7 @@
 //      - 优先级权重：手动 1e8×max(1,len-i)，默认 1e5×max(1,len-i)
 // ============================================================================
 
-// Σ stats[k] × rates[k]/100（对齐旧 sumRatesProduct，statCount 取向量长度）
+// Σ stats[k] × rates[k]/100（statCount 取向量长度）
 function scoreSumRatesProduct(sv, rv){
   let s = 0;
   const n = sv.length;
@@ -23,7 +23,7 @@ function scoreSumRatesProduct(sv, rv){
   return s;
 }
 
-// 双 Uint32 几何相邻判定：a 的外圈邻居掩码与 b 的占用掩码双向 OR（对齐旧 areAdjacent）
+// 双 Uint32 几何相邻判定：a 的外圈邻居掩码与 b 的占用掩码双向 OR
 function scoreAreAdjacent(aLo, aHi, bNbrLo, bNbrHi){
   return ((aLo & bNbrLo) | (aHi & bNbrHi)) !== 0;
 }
@@ -37,6 +37,7 @@ function scoreViewOf(p){
     sv: p.sv || cleanVec(p.stats),
     rv: p.rv || cleanVec(p.rates),
     attribute: p.attribute,
+    causesDamage: !!p.causesDamage,
     lo: p.lo !== undefined ? p.lo : (p.mask ? (p.mask.lo|0) : 0),
     hi: p.hi !== undefined ? p.hi : (p.mask ? (p.mask.hi|0) : 0),
     nbrLo: p.nbrLo !== undefined ? p.nbrLo : (p.neighborMask ? (p.neighborMask.lo|0) : 0),
@@ -44,12 +45,12 @@ function scoreViewOf(p){
   });
 }
 
-// 相邻两法宝产生的加成事件数组（对齐旧 pairBonusEvents，字段逐字一致；四处 push 均带 bonus>0 守卫）
+// 相邻两法宝产生的加成事件数组（四处 push 均带 bonus>0 守卫）
 function scorePairBonusEvents(a, b){
   // 守卫：未携带 sv/rv 的原始几何模板跳过而非崩溃（空数组是合法向量，用 == null 判定）。
   if(a.sv == null || a.rv == null || b.sv == null || b.rv == null) return [];
   if(!scoreAreAdjacent(a.nbrLo, a.nbrHi, b.lo, b.hi)) return [];
-  // 同属性守卫：加成事件只在同属性法宝之间发生（provider 作用于目标/self 触发均要求源与目标同属性；与 legacy pairBonusEvents 逐字对齐）
+  // 同属性守卫：加成事件只在同属性法宝之间发生（provider 作用于目标/self 触发均要求源与目标同属性）
   if(a.attribute !== b.attribute) return [];
   const events = [];
   const aStats = a.sv, aRates = a.rv, bStats = b.sv, bRates = b.rv;
@@ -74,7 +75,21 @@ function scorePairBonusEvents(a, b){
   return events;
 }
 
-// 无序物品对的潜在加成上限（不做相邻检查，对齐旧 potentialPairBonus）
+// 无序物品对是否构成“伤害贴邻 bond”（加成法宝贴同属性伤害法宝，最后破平软偏置）：
+// 同一对相邻法宝中，一端是加成法宝（provider/self）、另一端造成伤害（causesDamage）且二者同属性，
+// 即为一个 bond（单向成立即计一次，无序对天然对称）。本质 = isBonus(a)&&isDmg(b) || isBonus(b)&&isDmg(a)。
+// 该计数仅进入比较链的【最末破平项】（见 scoreCompareEvaluationObjects），不改变品质默认档位排序，
+// 也不进入实际总属性 totalScore（软偏置，最后破平档）。
+function scoreIsDamageBond(a, b){
+  if(!a || !b) return false;
+  if(a.attribute !== b.attribute) return false;   // 严格同属性守卫
+  const aBonus = a.bonusKind === 'provider' || a.bonusKind === 'self';
+  const bBonus = b.bonusKind === 'provider' || b.bonusKind === 'self';
+  const aDmg = !!a.causesDamage, bDmg = !!b.causesDamage;
+  return (aBonus && bDmg) || (bBonus && aDmg);
+}
+
+// 无序物品对的潜在加成上限（不做相邻检查）
 function scorePotentialPairBonus(a, b){
   if(a.sv == null || a.rv == null || b.sv == null || b.rv == null) return 0;
   // 同属性守卫（与 scorePairBonusEvents 一致）：异属性潜在加成为 0，剪枝上界只会更紧
@@ -88,7 +103,7 @@ function scorePotentialPairBonus(a, b){
   return bonus;
 }
 
-// 单个目标的优先级增益（对齐旧 targetPriorityGain，原地累计进向量并记录 link）
+// 单个目标的优先级增益（原地累计进向量并记录 link）
 function scoreTargetPriorityGain(target, neighbor, manualVector, defaultVector, links){
   if(target.manualOrder >= 0){
     manualVector[target.manualOrder]++;
@@ -99,7 +114,7 @@ function scoreTargetPriorityGain(target, neighbor, manualVector, defaultVector, 
   }
 }
 
-// 摆放 p 相对已放置集合 placed 的优先级增益（对齐旧 priorityGainFor，权重公式一致）
+// 摆放 p 相对已放置集合 placed 的优先级增益（权重公式一致）
 function scorePriorityGainFor(p, placed, manualCount, defaultTierCount){
   const manualVector = new Array(manualCount).fill(0);
   const defaultVector = new Array(defaultTierCount).fill(0);
@@ -117,7 +132,7 @@ function scorePriorityGainFor(p, placed, manualCount, defaultTierCount){
   return {manualVector, defaultVector, links, weighted};
 }
 
-// 向量字典序比较（对齐旧 compareVectors）
+// 向量字典序比较
 function scoreCompareVectors(a, b){
   const n = Math.max(a.length, b.length);
   for(let i = 0; i < n; i++){
@@ -127,7 +142,7 @@ function scoreCompareVectors(a, b){
   return 0;
 }
 
-// 具体摆放全量评估（对齐旧 evaluateConcrete；occupied 用 {lo,hi} 数值对代替 BigInt）
+// 具体摆放全量评估（occupied 用 {lo,hi} 数值对）
 // ctx = {statCount, useBonus, manualCount, defaultTierCount, totalItems(可选，默认 placements.length)}
 function scoreEvaluateConcrete(placements, ctx){
   const useBonus = !!ctx.useBonus;
@@ -140,12 +155,14 @@ function scoreEvaluateConcrete(placements, ctx){
   const defaultVector = new Array(defaultTierCount).fill(0);
   const bonusEvents = [], priorityLinks = [];
   let bonusScore = 0;
+  let damageBondCount = 0; // 伤害贴邻 bond 计数（最后破平软偏置，见 scoreIsDamageBond）
   const views = placements.map(scoreViewOf);
   for(const p of views){ baseScore += p.value; area += p.area; occLo = (occLo | p.lo) >>> 0; occHi = (occHi | p.hi) >>> 0; }
   for(let i = 0; i < views.length; i++) for(let j = i + 1; j < views.length; j++){
     const a = views[i], b = views[j];
     if(!scoreAreAdjacent(a.nbrLo, a.nbrHi, b.lo, b.hi)) continue;
     adjacencyCount++;
+    if(scoreIsDamageBond(a, b)) damageBondCount++;
     scoreTargetPriorityGain(a, b, manualVector, defaultVector, priorityLinks);
     scoreTargetPriorityGain(b, a, manualVector, defaultVector, priorityLinks);
     if(useBonus){
@@ -156,13 +173,14 @@ function scoreEvaluateConcrete(placements, ctx){
     complete: placements.length === totalItems,
     baseScore, bonusScore, totalScore: baseScore + bonusScore, area,
     itemCount: placements.length, adjacencyCount,
+    damageBondCount,
     manualPriorityVector: manualVector, defaultPriorityVector: defaultVector,
     placements: placements.slice(), occupied: {lo: occLo, hi: occHi},
     bonusEvents, priorityLinks
   };
 }
 
-// 结果对象字典序比较（对齐旧 compareEvaluationObjects，EPS=1e-9）
+// 结果对象字典序比较（EPS=1e-9）
 function scoreCompareEvaluationObjects(a, b){
   const EPS = 1e-9;
   const ac = !!a.complete, bc = !!b.complete;
@@ -170,6 +188,9 @@ function scoreCompareEvaluationObjects(a, b){
   if(Math.abs(a.totalScore - b.totalScore) > EPS) return a.totalScore > b.totalScore ? 1 : -1;
   const mc = scoreCompareVectors(a.manualPriorityVector, b.manualPriorityVector); if(mc !== 0) return mc;
   const dc = scoreCompareVectors(a.defaultPriorityVector, b.defaultPriorityVector); if(dc !== 0) return dc;
+  // 伤害贴邻 bond（最后破平）：品质默认档位全部相同时才比较加成法宝贴同属性伤害法宝的个数
+  const da = a.damageBondCount || 0, db = b.damageBondCount || 0;
+  if(da !== db) return da > db ? 1 : -1;
   if((a.adjacencyCount || 0) !== (b.adjacencyCount || 0)) return (a.adjacencyCount || 0) > (b.adjacencyCount || 0) ? 1 : -1;
   if(a.itemCount !== b.itemCount) return a.itemCount > b.itemCount ? 1 : -1;
   if(a.area !== b.area) return a.area > b.area ? 1 : -1;
@@ -178,7 +199,7 @@ function scoreCompareEvaluationObjects(a, b){
   return 0;
 }
 
-// 统计总量（对齐旧 buildStatTotals）：base=Σ摆放 stats，bonus=Σ事件 statBreakdown，total=base+bonus
+// 统计总量：base=Σ摆放 stats，bonus=Σ事件 statBreakdown，total=base+bonus
 function scoreBuildStatTotals(best, statCount){
   const base = new Array(statCount).fill(0);
   const bonus = new Array(statCount).fill(0);
@@ -221,7 +242,7 @@ function scoreWeightedTotal(stats, weights){
   return Math.round(s * 10) / 10;
 }
 
-// 序列化最好结果（对齐旧 serializeBest，键集完全一致；occupied/mask/neighborMask 转十进制字符串）
+// 序列化最好结果（occupied/mask/neighborMask 转十进制字符串）
 function scoreSerializeBest(best, statKeys, statCount){
   return {
     ...best,
@@ -239,8 +260,8 @@ function scoreSerializeBest(best, statKeys, statCount){
 // ----------------------------------------------------------------------------
 // 自测：手工构造小布局的黄金断言。node 与浏览器均可跑（typeof window 守卫）。
 // 评分纯函数对向量维数 K 完全泛化（K 取自 payload.statCount），本自测用 K=3 向量验证核心契约；
-// 生产环境 bonusStats 注册表已扩展为 8 维（atk/def/hp + dmg/crit/heal/shield/drain），
-// 引擎与 frozen worker 均按 payload 维度运行，无需为 K 改写逻辑。返回 {pass, failures[]}。
+// 生产环境 bonusStats 注册表为 3 维（atk/def/hp），伤害与否是法宝级 causesDamage 标记（非 stat 维）。
+// 引擎与 worker 均按 payload 维度运行，无需为 K 改写逻辑。返回 {pass, failures[]}。
 // ----------------------------------------------------------------------------
 function __SCORE_SELFTEST__(){
   const failures = [];
@@ -320,7 +341,7 @@ function __SCORE_SELFTEST__(){
   assert(best5.bonusEvents.length === 2, '布局5：2 个加成事件');
   assert(best5.occupied.lo === 7 && best5.occupied.hi === 0, '布局5：occupied=bit0|bit1|bit2=7');
   assert(best5.manualPriorityVector[0] === 1, '布局5：manualVector[0]=1（d3 与 b1 相邻）');
-  // 序列化：键集对齐旧 serializeBest
+  // 序列化：mask/neighborMask 转十进制串
   const ser5 = scoreSerializeBest(best5, ['atk','def','hp'], 3);
   assert(ser5.occupied === '7', '布局5：序列化 occupied 十进制串');
   assert(Array.isArray(ser5.statKeys) && ser5.statKeys.length === 3, '布局5：序列化 statKeys');
@@ -381,6 +402,35 @@ function __SCORE_SELFTEST__(){
   assert(ev7self.length === 1 && ev7self[0].kind === 'self_neighbor' && close(ev7self[0].bonus, 10), '布局7：self 同属性相邻触发一次（200×5/100=10）');
   assert(scorePairBonusEvents(s7, n7diff).length === 0, '布局7：self 异属性相邻 0 事件');
 
+  // 布局 8：伤害贴邻 bond（最后破平软偏置）——同属性 + 一端加成、一端造成伤害
+  // X8：provider（属性金，不造成伤害）占 bit0；Y8：none 但 causesDamage（属性金）占 bit1 → 相邻即 bond
+  // Z8：provider（属性木，不造成伤害）占 bit4（独立外圈，不与 X8/Y8 相邻）→ 不构成 bond
+  const x8 = {no:20, itemName:'子', value:5, area:1, bonusKind:'provider', attribute:'金', causesDamage:false,
+    stats:[0,0,0], rates:[10,0,0], sv:[0,0,0], rv:[10,0,0],
+    lo:1, hi:0, nbrLo:2, nbrHi:0, mask:{lo:1,hi:0}, neighborMask:{lo:2,hi:0},
+    manualOrder:-1, priorityTier:-1, customPriority:null};
+  const y8 = {no:21, itemName:'丑', value:9, area:1, bonusKind:'none', attribute:'金', causesDamage:true,
+    stats:[100,0,0], rates:[0,0,0], sv:[100,0,0], rv:[0,0,0],
+    lo:2, hi:0, nbrLo:1, nbrHi:0, mask:{lo:2,hi:0}, neighborMask:{lo:1,hi:0},
+    manualOrder:-1, priorityTier:-1, customPriority:null};
+  const z8 = {no:22, itemName:'寅', value:5, area:1, bonusKind:'provider', attribute:'木', causesDamage:false,
+    stats:[0,0,0], rates:[10,0,0], sv:[0,0,0], rv:[10,0,0],
+    lo:4, hi:0, nbrLo:8, nbrHi:0, mask:{lo:4,hi:0}, neighborMask:{lo:8,hi:0},
+    manualOrder:-1, priorityTier:-1, customPriority:null};
+  const y8nd = {no:23, itemName:'卯', value:9, area:1, bonusKind:'none', attribute:'金', causesDamage:false,
+    stats:[100,0,0], rates:[0,0,0], sv:[100,0,0], rv:[0,0,0],
+    lo:2, hi:0, nbrLo:1, nbrHi:0, mask:{lo:2,hi:0}, neighborMask:{lo:1,hi:0},
+    manualOrder:-1, priorityTier:-1, customPriority:null};
+  assert(scoreIsDamageBond(x8, y8) === true, '布局8：同属性 provider+伤害 => bond');
+  assert(scoreIsDamageBond(y8, x8) === true, '布局8：bond 对称');
+  assert(scoreIsDamageBond(x8, z8) === false, '布局8：异属性 provider 对 => 非 bond');
+  assert(scoreIsDamageBond(x8, y8nd) === false, '布局8：同属性但目标不造成伤害 => 非 bond');
+  const g8a = scoreEvaluateConcrete([x8, y8, z8], {statCount:3, useBonus:true, manualCount:0, defaultTierCount:25, totalItems:3});
+  const g8b = scoreEvaluateConcrete([x8, y8nd, z8], {statCount:3, useBonus:true, manualCount:0, defaultTierCount:25, totalItems:3});
+  assert(g8a.damageBondCount === 1, '布局8：含伤害目标 => damageBondCount=1');
+  assert(g8b.damageBondCount === 0, '布局8：目标改非伤害 => damageBondCount=0');
+  assert(scoreCompareEvaluationObjects(g8a, g8b) === 1, '布局8：total/default 相等时更高 bond 胜出（最后破平）');
+
   return {pass: failures.length === 0, failures};
 }
 
@@ -390,6 +440,7 @@ if(typeof window !== 'undefined'){
   window.scoreViewOf = scoreViewOf;
   window.scorePairBonusEvents = scorePairBonusEvents;
   window.scorePotentialPairBonus = scorePotentialPairBonus;
+  window.scoreIsDamageBond = scoreIsDamageBond;
   window.scoreTargetPriorityGain = scoreTargetPriorityGain;
   window.scorePriorityGainFor = scorePriorityGainFor;
   window.scoreCompareVectors = scoreCompareVectors;

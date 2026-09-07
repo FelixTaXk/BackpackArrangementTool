@@ -1,4 +1,4 @@
-// app.js —— init 与全局事件绑定，文件末尾调用 init()。加载顺序 13/13，依赖全部模块。
+// app.js —— init 与全局事件绑定，文件末尾调用 init()。加载顺序 19/19，依赖全部模块。
 'use strict';
 
 function init(){
@@ -9,6 +9,7 @@ function init(){
   bindEvents();
   syncWeightPresetChips();
   initLibraryFilter();
+  rebuildKindFilter();
   renderSpaceGrid();
   renderItemsTable();
   renderInventoryTable();
@@ -52,6 +53,16 @@ function bindEvents(){
     const btn = e.target.closest('button.attr-medallion');
     if(!btn) return;
     setLibraryFilter(btn.dataset.attrFilter || '');
+    rebuildKindFilter();
+    renderItemsTable();
+  });
+  // 种类筛选（本期新增）：选项随属性罗盘重建；单击切换选中，再次单击已选项则取消（未选择→库表不展示）。
+  document.getElementById('libraryFilterKind').addEventListener('click', e=>{
+    const btn = e.target.closest('button.kind-medallion');
+    if(!btn) return;
+    const val = btn.dataset.kindFilter || '';
+    if(btn.classList.contains('active')) setLibraryFilterKind('');
+    else setLibraryFilterKind(val);
     renderItemsTable();
   });
   document.getElementById('renumberBtn').addEventListener('click', renumberInventory);
@@ -73,10 +84,6 @@ function bindEvents(){
     const deep=e.target.value==='deep';
     document.getElementById('nodeLimit').disabled=!deep;
     document.getElementById('timeLimit').disabled=!deep;
-  });
-  document.getElementById('engineMode').addEventListener('change', ()=>{
-    lastResult = null;
-    renderResultGrid(null);
   });
   document.getElementById('focusAttr').addEventListener('change', ()=>{
     lastResult = null;

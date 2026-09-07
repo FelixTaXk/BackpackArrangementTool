@@ -1,4 +1,4 @@
-// utils.js —— 几何与文本工具（形状变换/邻接/掩码/转义/格式化/迷你预览）。加载顺序 3/13，运行时读取 state 全局。
+// utils.js —— 几何与文本工具（形状变换/邻接/掩码/转义/格式化/迷你预览）。加载顺序 3/19，运行时读取 state 全局。
 'use strict';
 
 function cloneCells(cells){ return cells.map(c=>[c[0],c[1]]); }
@@ -50,7 +50,7 @@ function areAdjacent(cellsA, cellsB){
 // 「热路径禁用 BigInt」约定及 engine-encoding.js encParseMask/encMaskToDec 完全互通：
 //   n = hi*4294967296 + lo
 // 7×6=42 格棋盘：格位 idx=r*W+c，idx 0..31 落在 lo，idx 32..41 落在 hi。
-// 十进制串仍是唯一跨线程线格式（冻结的 solver-worker.js 用 BigInt(str) 还原，不受影响）。
+// 十进制串是唯一跨线程线格式（Worker 侧用 BigInt(str) 还原）。
 function buildActiveMask(){
   let lo = 0, hi = 0, count = 0;
   for(let r=0;r<H;r++) for(let c=0;c<W;c++) if(active[r][c]){

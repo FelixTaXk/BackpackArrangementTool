@@ -1,4 +1,4 @@
-// ui-result.js —— 求解结果渲染：摆放网格/统计文本/重点邻接摘要/加成事件行。加载顺序 9/13，依赖 utils、talisman-model。
+// ui-result.js —— 求解结果渲染：摆放网格/统计文本/重点邻接摘要/加成事件行。加载顺序 9/19，依赖 utils、talisman-model。
 'use strict';
 
 function renderResultGrid(best){
@@ -15,9 +15,13 @@ function renderResultGrid(best){
         fill:style.fill,
         border:style.border
       });
+      // 左上角首格（最小 r，再最小 c）放置属性小图标；其余格不加。
+      let tl = p.cells[0];
+      for(const cc of p.cells){ if(cc[0] < tl[0] || (cc[0] === tl[0] && cc[1] < tl[1])) tl = cc; }
+      const tlKey = tl[0] + ',' + tl[1];
       p.cells.forEach(([r,c])=>cellMap.set(`${r},${c}`, {
         no:String(p.no), label:p.no, fill:style.fill, border:style.border, text:style.text,
-        name:p.itemName, quality:p.quality
+        name:p.itemName, quality:p.quality, attribute:p.attribute, isTopLeft:(r + ',' + c) === tlKey
       }));
     });
   }
@@ -33,6 +37,17 @@ function renderResultGrid(best){
           div.style.background = x.fill;
           div.style.color = x.text;
           div.title = `#${x.no} ${qualityName(x.quality)}｜${x.name}`;
+
+          // 属性小图标（左上角首格）：字符取属性名，颜色与法宝库属性列一致（邪为黑色）。
+          if(x.isTopLeft){
+            const badge = document.createElement('span');
+            badge.className = 'attr-badge';
+            const ac = (ATTRIBUTE_MAP[x.attribute] || {displayColor:'#333'}).displayColor;
+            badge.style.color = ac;
+            badge.style.borderColor = ac;
+            badge.textContent = x.attribute;
+            div.appendChild(badge);
+          }
 
           // 同一装备内部只保留细分格线，装备外缘使用更明显的品质色边界。
           const sameTop = cellMap.get(`${r-1},${c}`)?.no === x.no;
@@ -86,6 +101,7 @@ function renderStats(best, nodes, elapsed, stopped, activeCells, skipped, solver
   const list = best.placements.map((p)=>`#${p.no} ${p.itemName}｜${qualityName(p.quality)}｜${p.area}格｜基础 ${baseStatsSummary(p)}｜${p.customPriority !== null && p.customPriority !== undefined ? `手动邻接优先级 ${p.customPriority}` : '默认邻接规则'}｜${bonusDescription(p)}｜坐标 ${p.cells.map(([r,c])=>`(${r+1},${c+1})`).join(' ')}`).join('\n') || '未放入任何物品。';
   const eventList = best.bonusEvents.length ? best.bonusEvents.map(eventLine).join('\n') : '无有效百分比加成。';
   const prioritySummary = buildPrioritySummary(best);
+  const damageBondSummary = buildDamageBondSummary(best);
   const skippedText = skipped && skipped.length ? `\n\n未参与搜索（单件在当前空间/方向规则下没有任何合法位置）：\n${skipped.map(x=>`#${x.no} ${x.name}`).join('\n')}` : '';
   const placedNos = new Set(best.placements.map(p=>String(p.no)));
   const omitted = inventory.filter(x=>!placedNos.has(String(x.no)) && !(skipped||[]).some(y=>String(y.no)===String(x.no)));
@@ -113,7 +129,7 @@ function renderStats(best, nodes, elapsed, stopped, activeCells, skipped, solver
     else if(as||bs) singleMultiAdj++;
     else multiMultiAdj++;
   }
-  document.getElementById('statusBox').textContent = `${conclusion}\n耗时：${elapsed} ms\n求解起点：从已有物品清单自动生成\n自动布局策略：多格物品先布局，${solverMeta.singletonDeferredCount ?? 0} 件单格物品延后分配（属性分配检查 ${Number(solverMeta.assignmentChecks||0).toLocaleString('zh-CN')} 次）\n完整装入：${best.complete?'是':'否'}\n物品总占格：${solverMeta.totalArea ?? '-'}，可用空间：${activeCells}\n放入物品：${best.itemCount}/${solverMeta.totalItems ?? inventory.length}\n空余可用格：${unused}\n比较顺序：完整装入 ＞ 实际总属性（基础属性 + 百分比加成）＞ 手动指定物品邻接（1最高，同优先级合并比较）＞ 默认重点物品邻接 ＞ 总邻接数量\n实际总属性：${formatNum(best.totalScore)} = 基础属性 ${formatNum(best.baseScore)} + 百分比加成 ${formatNum(best.bonusScore)}\n总邻接数量：${best.adjacencyCount ?? 0} 对不同物品\n邻接结构：单格-单格 ${singleSingleAdj} 对｜单格-多格 ${singleMultiAdj} 对｜多格-多格 ${multiMultiAdj} 对\n\n重点物品邻接：\n${prioritySummary}\n\n摆放清单：\n${list}\n\n百分比加成清单：\n${eventList}${omittedText}${skippedText}`;
+  document.getElementById('statusBox').textContent = `${conclusion}\n耗时：${elapsed} ms\n求解起点：从已有物品清单自动生成\n自动布局策略：多格物品先布局，${solverMeta.singletonDeferredCount ?? 0} 件单格物品延后分配（属性分配检查 ${Number(solverMeta.assignmentChecks||0).toLocaleString('zh-CN')} 次）\n完整装入：${best.complete?'是':'否'}\n物品总占格：${solverMeta.totalArea ?? '-'}，可用空间：${activeCells}\n放入物品：${best.itemCount}/${solverMeta.totalItems ?? inventory.length}\n空余可用格：${unused}\n比较顺序：完整装入 ＞ 实际总属性（基础属性 + 百分比加成）＞ 手动指定物品邻接（1最高，同优先级合并比较）＞ 默认重点物品邻接 ＞ 加成贴同属性伤害法宝数（最后破平） ＞ 总邻接数量\n实际总属性：${formatNum(best.totalScore)} = 基础属性 ${formatNum(best.baseScore)} + 百分比加成 ${formatNum(best.bonusScore)}\n总邻接数量：${best.adjacencyCount ?? 0} 对不同物品\n加成法宝贴同属性伤害法宝：${best.damageBondCount ?? 0} 处\n邻接结构：单格-单格 ${singleSingleAdj} 对｜单格-多格 ${singleMultiAdj} 对｜多格-多格 ${multiMultiAdj} 对\n\n${damageBondSummary}\n\n重点物品邻接：\n${prioritySummary}\n\n摆放清单：\n${list}\n\n百分比加成清单：\n${eventList}${omittedText}${skippedText}`;
 }
 function buildPrioritySummary(best){
   const countByItem = new Map();
@@ -138,6 +154,29 @@ function buildPrioritySummary(best){
     const label = x.mode === 'custom' ? `手动优先级 ${x.customPriority}` : defaultPriorityTierLabel(x.tier);
     return `[${label}] #${x.no} ${x.name}：${x.count} 个不同邻居`;
   }).join('\n');
+}
+
+function buildDamageBondSummary(best){
+  // 加成法宝（provider/self）贴着【同属性】造成伤害法宝的数量提示（最后破平软偏置的可视化）。
+  if(!best || !Array.isArray(best.placements)) return '';
+  const rows = [];
+  const placed = best.placements;
+  for(const a of placed){
+    const aBonus = a.bonusKind === 'provider' || a.bonusKind === 'self';
+    if(!aBonus) continue;
+    // 统计 a 贴着的同属性伤害邻居（不同法宝）
+    const seen = new Set();
+    let dmgN = 0;
+    for(const b of placed){
+      if(a === b || !b.causesDamage || b.attribute !== a.attribute) continue;
+      if(seen.has(b.no)) continue;
+      if(!areAdjacent(a.cells, b.cells)) continue;
+      seen.add(b.no); dmgN++;
+    }
+    if(dmgN > 0) rows.push(`#${a.no} ${a.itemName} 贴着 ${dmgN} 个同属性伤害法宝（#${[...seen].join('、#')}）`);
+  }
+  if(!rows.length) return '加成法宝贴同属性伤害法宝：本方案无加成法宝直接贴着造成伤害的同属性法宝。';
+  return rows.join('\n');
 }
 
 function eventLine(e){

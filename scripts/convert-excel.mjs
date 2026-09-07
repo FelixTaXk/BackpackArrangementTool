@@ -4,12 +4,13 @@
 //   node scripts/convert-excel.mjs
 // 依赖 SheetJS(xlsx)，不写入项目 package.json；本脚本不参与页面运行时，可重复运行。
 //
-// 实际 Excel 结构（与 docs/excel-spec.md 的三长表规格不同，按实际格式容错处理）：
-//   7 个 Sheet（金/木/水/火/土/雷/体），每个 Sheet 即该属性法宝表，宽表列：
-//   法宝名 | 形状 | 共鸣值 | 攻击力 | 防御 | 生命值 | 加成率 | 加成部位 | 加成属性 | 颜色 | 种类
+// 实际 Excel 结构（宽表，8 属性 Sheet，见 docs/excel-spec.md）：
+//   8 个 Sheet（金/木/水/火/土/雷/邪/体），每个 Sheet 即该属性法宝表，宽表列：
+//   法宝名 | 形状 | 共鸣值 | 攻击力 | 防御 | 生命值 | 加成率 | 加成部位 | 加成属性 | 颜色 | 种类 | 是否造成伤害
 //   - 法宝名为空的行沿用上一行法宝名（同一法宝的多个品质行）；颜色列即品质。
 //   - 形状为矩阵记法（如 "[1 1]"、"[0 1]\n[1 1]"），1 占用、0 空格，逐行解析为 cells [行,列]。
 //   - 加成部位：相邻→provider、相邻自身→self、无→none；加成属性即加成的属性项目，加成率即百分比数值。
+//   - 是否造成伤害：是/1/true/y/yes → causesDamage=true（伤害加成目标标记）。
 // 计算项目限定 atk/def/hp 三项（注册表）；其余项目（共鸣值/种类 及非三项的属性项目）
 // 留存于 extraStats（基础侧）/ extraRates（加成侧），不参与计算与校验。
 
@@ -65,7 +66,8 @@ const COL_DEFS = [
   { key: 'bonusPart', names: ['加成部位'] },
   { key: 'bonusStat', names: ['加成属性'] },
   { key: 'quality', names: ['颜色', '品质'] },
-  { key: 'kind', names: ['种类'] }
+  { key: 'kind', names: ['种类'] },
+  { key: 'causesDamage', names: ['是否造成伤害'] }
 ];
 
 const norm = v => String(v ?? '').trim();
@@ -122,7 +124,7 @@ const wb = XLSX.read(readFileSync(XLSX_PATH), { type: 'buffer' });
 console.log(`Sheet 列表：${wb.SheetNames.join(' | ')}`);
 const sheetDiffs = [];
 if (wb.SheetNames.length !== ATTRIBUTES.length || !ATTRIBUTES.every(a => wb.SheetNames.includes(a))) {
-  sheetDiffs.push(`期望 Sheet 为 7 属性（${ATTRIBUTES.join('/')}），实际为：${wb.SheetNames.join('、')}`);
+  sheetDiffs.push(`期望 Sheet 为 ${ATTRIBUTES.length} 属性（${ATTRIBUTES.join('/')}），实际为：${wb.SheetNames.join('、')}`);
 }
 // 每个属性取对应名称的 Sheet；缺失则按顺序兜底
 function sheetFor(attr, idx) {
@@ -153,7 +155,7 @@ function locateCols(header) {
     }
     const i = heads.findIndex(h => def.names.includes(h));
     cols[def.key] = i;
-    if (i < 0 && def.key !== 'rate') sheetDiffs.push(`缺少列：${def.names.join('/')}`);
+    if (i < 0 && def.key !== 'rate' && def.key !== 'causesDamage') sheetDiffs.push(`缺少列：${def.names.join('/')}`);
   }
   return cols;
 }
@@ -227,6 +229,8 @@ ATTRIBUTES.forEach((attr, idx) => {
       extraStats['种类'] = norm(row[c.kind]);
     }
 
+    // 是否造成伤害（伤害加成目标标记）：是/1/true/y/yes → causesDamage=true（其余/空不置，缺省 false）
+    const causesDamage = c.causesDamage >= 0 ? ['是','1','true','y','yes'].includes(norm(row[c.causesDamage]).toLowerCase()) : false;
     // 加成项目：加成属性 ∈ {攻击力,防御,生命值} → bonusRates；否则 → extraRates
     const bonusRates = {};
     const extraRates = {};
@@ -257,6 +261,7 @@ ATTRIBUTES.forEach((attr, idx) => {
     seenNames.add(`${name}|${quality}`);
     talismans.push({
       name, attribute: attr, quality, cells, bonusMode, baseStats, bonusRates,
+      ...(causesDamage ? { causesDamage: true } : {}),
       ...(Object.keys(extraStats).length ? { extraStats } : {}),
       ...(Object.keys(extraRates).length ? { extraRates } : {})
     });
@@ -392,6 +397,7 @@ for (const t of talismans) {
     entryBlocks.push({ comment: `    // ===== ${currentAttr} =====`, entry: null });
   }
   let line2 = `baseStats:${fmtObj(t.baseStats)}, bonusMode:'${t.bonusMode}', bonusRates:${fmtObj(t.bonusRates)}`;
+  if (t.causesDamage) line2 += ', causesDamage:true';
   if (t.extraStats) line2 += `, extraStats:${fmtObj(t.extraStats)}`;
   if (t.extraRates) line2 += `, extraRates:${fmtObj(t.extraRates)}`;
   entryBlocks.push({ comment: null, entry: `    {id:'${t.id}', name:'${t.name}', attribute:'${t.attribute}', quality:'${t.quality}', cells:${fmtCells(t.cells)},\n     ${line2}}` });
@@ -464,6 +470,8 @@ for (const t of talismans) {
   Object.keys(t.extraRates || {}).forEach(k => extraKeys.add(`extraRates.${k}`));
 }
 console.log(`extraStats/extraRates 留存的额外项目：${extraKeys.size ? [...extraKeys].join('、') : '无'}`);
+const dmgCausers = talismans.filter(t => t.causesDamage).length;
+if (dmgCausers) console.log(`造成伤害标记（causesDamage）：${dmgCausers} 条`);
 if (rejected.length) {
   console.warn(`\n⚠ 被拒条目 ${rejected.length} 条（未写入产物）：`);
   for (const r of rejected) console.warn(`  - ${r.name}：${r.reasons.join('；')}`);

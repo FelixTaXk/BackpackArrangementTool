@@ -16,7 +16,7 @@
 <main>
   <section>
     <div class="card space-card">
-      <h2>1. 当前背包空间</h2>
+      <h2>当前背包空间</h2>
       <div class="space-body">
         <div class="space-controls">
           <div class="row">
@@ -33,11 +33,15 @@
     </div>
 
     <div class="card library-card">
-      <h2>2. 法宝库</h2>
+      <h2>法宝库</h2>
       <div class="row filter-row">
         <label class="filter-label">属性筛选</label>
         <div id="libraryFilterAttribute" class="attr-compass" role="group" aria-label="属性筛选"></div>
         <button id="resetItemsBtn">重新加载法宝数据库</button>
+      </div>
+      <div class="row filter-row">
+        <label class="filter-label">种类筛选</label>
+        <div id="libraryFilterKind" class="attr-compass" role="group" aria-label="种类筛选"></div>
       </div>
       <div class="hint">法宝的名称、形状、基础属性与加成全部来自内置数据库（用户 Excel 转换产物），不可手动修改。先选择属性筛选，同种法宝合并为一行；在表格品质列选择品质后点击“添加”，即可将对应品质的法宝加入清单参与求解。</div>
       <div class="hint">横屏时法宝库和已有法宝清单左右并排，并分别在固定高度区域内滚动。</div>
@@ -50,7 +54,7 @@
     </div>
 
     <div class="card inventory-card">
-      <h2>3. 已有法宝清单</h2>
+      <h2>已有法宝清单</h2>
       <div class="row">
         <button id="renumberBtn">重新编号</button>
         <button id="clearInventoryBtn" class="danger">清空清单</button>
@@ -73,7 +77,7 @@
 
   <section>
     <div class="card result-card">
-      <h2>4. 自动搜索与当前最佳摆放结果</h2>
+      <h2>自动搜索与当前最佳摆放结果</h2>
       <div id="stashBar" class="stash-bar" role="group" aria-label="方案暂存">
         <span class="stash-title">方案暂存</span>
         <button id="stashSlot1" class="stash-slot" type="button" data-slot="0"><span class="stash-slot-label">暂存1·空</span></button>
@@ -94,12 +98,6 @@
                 <select id="searchMode">
                   <option value="fast">快速（最多 3 秒）</option>
                   <option value="deep" selected>深度（使用下方上限）</option>
-                </select>
-              </label>
-              <label>求解引擎
-                <select id="engineMode">
-                  <option value="hybrid">元启发式 SA</option>
-                  <option value="auto" selected>混合 Portfolio</option>
                 </select>
               </label>
               <label>加成聚焦 <select id="focusAttr"><option value="" selected>默认·总收益最大化</option></select></label>
@@ -136,7 +134,7 @@
               <button id="saveBtn">保存当前配置</button>
               <button id="loadBtn">读取配置</button>
             </div>
-            <div class="hint">快速档优先在 3 秒内给出可用结果；深度档使用自定义上限继续优化。求解引擎统一为新引擎（auto 档：1 个经典 DFS 种子源 + 元启发式 SA 并行组合，取各成员最佳结果；hybrid 档全为 SA），快速档同样使用 SA 引擎（仅节点/时间上限收紧）。并行搜索会用多个不同随机起点同时计算并合并最佳结果，速度更快但会增加 CPU 与耗电，默认关闭。达到时间或节点上限不代表已证明全局最优。属性权重八项默认全 1（官方定价）与现状一致；权重只作用于基础属性计价，加成按原价，0 按 0.01 保底。</div>
+            <div class="hint">快速档优先在 3 秒内给出可用结果；深度档使用自定义上限继续优化。求解引擎统一为元启发式 SA（模拟退火 + 自适应算子 + 可选回火交换），老 DFS 引擎已退役。并行搜索会用多个不同随机起点同时计算并合并最佳结果，速度更快但会增加 CPU 与耗电，默认关闭。达到时间或节点上限不代表已证明全局最优。属性权重八项默认全 1（官方定价）与现状一致；权重只作用于基础属性计价，加成按原价，0 按 0.01 保底。</div>
           </div>
         </div>
         <div class="result-summary">
@@ -157,12 +155,12 @@
     </div>
 
     <div class="card help-card">
-      <h2>5. 使用说明</h2>
+      <h2>使用说明</h2>
       <ol>
         <li>先设置背包宽度、高度，并点击空间格子标记已解锁区域。</li>
         <li>法宝的名称、形状、属性（金木水火土雷邪体 8 种）、品质（绿蓝紫金红 5 种）、基础属性与加成全部来自内置数据库，不可手动修改；先选择属性筛选，表格中同种法宝的不同品质变体合并为一行，在每行“品质”列下拉选择品质后点击“添加”，加入对应品质的法宝。</li>
         <li>从法宝库添加法宝到已有法宝清单；真正参与计算的是已有法宝清单。需要指定某件法宝优先获得更多邻居时，在“邻接优先级”中填写数字：1 最高，数字越小越优先；留空使用默认规则。</li>
-        <li>加成模式一：“提升相邻同属性”（多为单格法宝）：给每个相邻的同属性法宝提供“相邻法宝各项基础值 × 对应加成率”的加成。</li>
+        <li>加成模式一："提升相邻"（多为单格法宝）：给每个相邻的同属性法宝提供"相邻法宝各项基础值 × 对应加成率"的加成。</li>
         <li>加成模式二：“提升自己”：每相邻一个同属性法宝，就按“自身各项基础值 × 对应加成率”给自身增加一次加成。</li>
         <li>实际总属性 = 全部法宝各项基础属性之和 + 全部加成事件各项目加成之和（所有项目数值求和后作为标量参与求解比较）；统计面板按项目（攻击力、防御、生命值、伤害、暴击伤害、治疗效果、护盾值、汲取 共 8 项）分项显示基础值、加成值与合计。</li>
       </ol>
@@ -179,7 +177,6 @@
 <script src="js/ui-library.js"></script>
 <script src="js/ui-inventory.js"></script>
 <script src="js/ui-result.js"></script>
-<script src="js/solver-worker.js"></script>
 <script src="js/score-shared.js"></script>
 <script src="js/engine-encoding.js"></script>
 <script src="js/engine-worker.js"></script>
