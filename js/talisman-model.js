@@ -1,4 +1,4 @@
-// talisman-model.js —— 法宝数据模型（数据库查库/记录归一化/加成摘要/默认优先级档位）。加载顺序 5/13，依赖 config、utils、state。
+// talisman-model.js —— 法宝数据模型（数据库查库/记录归一化/加成摘要/默认优先级档位）。加载顺序 5/19，依赖 config、utils、state。
 'use strict';
 
 // 品质中文名→内部 id 映射 QUALITY_NAME_TO_ID 由 config.js 提供（本文件加载顺序在其之后）。
@@ -75,6 +75,7 @@ function normalizeItemRecord(item){
     baseStats,
     bonusMode: def.bonusMode,
     bonusRates: {...def.bonusRates},
+    causesDamage: !!(def.causesDamage),
     customPriority,
     // 预折算标量（Σ 放大后 baseStats，保持 value=ΣbaseStats 恒等），供求解器比较与剪枝使用；分项明细见 baseStats。
     value: Object.values(baseStats).reduce((s,v)=>s + Number(v), 0)
@@ -100,7 +101,7 @@ function bonusKind(it){
   const mode = it && (it.bonusMode || it.bonusKind);
   return mode === 'provider' ? 'provider' : mode === 'self' ? 'self' : 'none';
 }
-function bonusModeName(mode){ return mode === 'provider' ? '提升相邻同属性' : mode === 'self' ? '提升自己' : '无'; }
+function bonusModeName(mode){ return mode === 'provider' ? '提升相邻' : mode === 'self' ? '提升自己' : '无'; }
 function statName(k){
   const s = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).find(x=>x.id === k);
   return s ? s.name : k;
@@ -130,13 +131,13 @@ function bonusRatesSummary(it){
 }
 function bonusControlHtml(it){
   const kind = bonusKind(it);
-  if(kind === 'provider') return `<span class="pill green">提升相邻同属性</span> <span class="hint">${escapeHtml(bonusRatesSummary(it))}</span>`;
+  if(kind === 'provider') return `<span class="pill green">提升相邻</span> <span class="hint">${escapeHtml(bonusRatesSummary(it))}</span>`;
   if(kind === 'self') return `<span class="pill">提升自己</span> <span class="hint">${escapeHtml(bonusRatesSummary(it))}</span>`;
   return '<span class="pill gray">无</span>';
 }
 function bonusDescription(it){
   const kind = bonusKind(it);
-  if(kind === 'provider') return `提升相邻同属性：${bonusRatesSummary(it)}（同属性目标基础值 × 加成率）`;
+  if(kind === 'provider') return `提升相邻：${bonusRatesSummary(it)}（同属性目标基础值 × 加成率）`;
   if(kind === 'self') return `提升自己：${bonusRatesSummary(it)}（自身基础值 × 加成率，每相邻一个同属性法宝一次）`;
   return '无加成属性';
 }

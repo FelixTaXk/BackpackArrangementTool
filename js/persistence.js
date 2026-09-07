@@ -1,4 +1,4 @@
-// persistence.js —— 本地配置保存/读取（schemaVersion 2，仅存数据库引用）与结果导出。加载顺序 12/13，依赖 state、utils、talisman-model、各渲染模块。
+// persistence.js —— 本地配置保存/读取（schemaVersion 2，仅存数据库引用）与结果导出。加载顺序 18/19，依赖 state、utils、talisman-model、各渲染模块。
 'use strict';
 
 function saveConfig(){
@@ -7,8 +7,6 @@ function saveConfig(){
     W,H,active,
     useAdjacencyBonus:document.getElementById('useAdjacencyBonus').checked,
     searchMode:document.getElementById('searchMode').value,
-    // 求解引擎为可选字段；旧存档缺失时读取侧缺省 legacy，schemaVersion 不变
-    engineMode:document.getElementById('engineMode').value,
     // 加成聚焦为可选字段（只加法）；旧存档缺失时读取侧回退 ''（默认·总收益最大化），schemaVersion 不变
     focusAttr:(document.getElementById('focusAttr') || {}).value || '',
     // 属性权重（一期线性）：存八 input 的原始字符串数组（0 必须存活，禁止 Number(..)||1 一类归一）；
@@ -55,10 +53,8 @@ function applySharedSettings(data){
   }
   if(Number(data.nodeLimit) >= 1000) document.getElementById('nodeLimit').value = String(Math.floor(Number(data.nodeLimit)));
   if(Number(data.timeLimit) >= 100) document.getElementById('timeLimit').value = String(Math.floor(Number(data.timeLimit)));
-  // 求解引擎：auto/hybrid 跟随存档；legacy（老存档）统一迁移为 auto（legacy 档已从界面移除，统一新引擎）。
-  // 缺字段（更旧存档）也回退 auto。
-  document.getElementById('engineMode').value = (data.engineMode === 'hybrid' || data.engineMode === 'auto') ? data.engineMode : 'auto';
-  // 加成聚焦：须属 bonusStats id 否则回退 ''（老存档无此键行为不变，仿 engineMode 保守先例）。
+  // 求解引擎已统一为 SA（老引擎退役），旧存档中的 engineMode 字段直接忽略。
+  // 加成聚焦：须属 bonusStats id 否则回退 ''（老存档无此键行为不变）。
   const focusStatKeys = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id);
   const focusSel = document.getElementById('focusAttr');
   if(focusSel) focusSel.value = focusStatKeys.indexOf(data.focusAttr) >= 0 ? data.focusAttr : '';

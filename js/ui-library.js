@@ -1,4 +1,4 @@
-// ui-library.js —— 法宝库卡片：表格渲染/属性筛选/同种法宝合并展示（品质行内下拉）/表格列布局。加载顺序 7/13，依赖 config、utils、state、talisman-model。
+// ui-library.js —— 法宝库卡片：表格渲染/属性筛选/同种法宝合并展示（品质行内下拉）/表格列布局。加载顺序 7/19，依赖 config、utils、state、talisman-model。
 'use strict';
 
 function updateTableColumnLayout(){
@@ -67,10 +67,59 @@ function initLibraryFilter(){
     b.innerHTML = (color ? `<span class="attr-dot" style="background:${color}"></span>` : '') + `<span class="attr-name">${label}</span>`;
     wrap.appendChild(b);
   };
-  makeBtn('', '全部', null);
   for(const a of ATTRIBUTE_OPTIONS) makeBtn(a.id, a.name, ATTR_MEDALLION_COLORS[a.id] || a.displayColor);
-  // 默认只展示金属性法宝，避免页面一次性全量展示；用户可切回“全部”或其他属性。
+  // 默认展示金属性法宝；属性罗盘仅含 8 属性（无“全部”），始终选定单一属性并据此限定种类筛选选项。
   setLibraryFilter('金');
+}
+
+// 法宝“种类”取值（来自数据库 extraStats['种类']，缺省 '无'）；库内同种法宝跨品质共享同一种类。
+function itemKind(it){
+  const rec = talismanById(it.id);
+  return (rec && rec.extraStats && rec.extraStats['种类']) || '无';
+}
+
+// 种类筛选：读激活项；空串表示“未选择”（库表据此不展示任何法宝）。
+function libraryFilterKind(){
+  const wrap = document.getElementById('libraryFilterKind');
+  if(!wrap) return '';
+  const btn = wrap.querySelector('button.kind-medallion.active');
+  return btn ? (btn.dataset.kindFilter || '') : '';
+}
+function setLibraryFilterKind(value){
+  const wrap = document.getElementById('libraryFilterKind');
+  if(!wrap) return;
+  wrap.querySelectorAll('button.kind-medallion').forEach(b=>{
+    const isActive = (b.dataset.kindFilter || '') === value;
+    b.classList.toggle('active', isActive);
+    b.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+}
+// 依据当前属性罗盘选型，重建种类筛选选项（仅含该属性出现的种类；“全部”固定首位，默认选中）。
+function rebuildKindFilter(){
+  const wrap = document.getElementById('libraryFilterKind');
+  if(!wrap) return;
+  wrap.innerHTML = '';
+  const attr = libraryFilterAttribute() || '金';
+  const types = new Set();
+  for(const t of (window.TALISMAN_DB.talismans || [])){
+    if(t.attribute === attr){
+      const k = (t.extraStats && t.extraStats['种类']) || '无';
+      if(k && k !== '无') types.add(k);
+    }
+  }
+  const sorted = [...types].sort((a,b)=>a.localeCompare(b,'zh'));
+  const make = (value,label)=>{
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'kind-medallion';
+    b.dataset.kindFilter = value;
+    b.setAttribute('aria-pressed', value === '全部' ? 'true' : 'false');
+    b.textContent = label;
+    wrap.appendChild(b);
+  };
+  make('全部','全部');
+  sorted.forEach(k=>make(k,k));
+  setLibraryFilterKind('全部');
 }
 
 // 基础属性固定三行展示：按注册表顺序（攻击力/防御/生命值）每项一行，缺失或 0 的项目显示 0，纯文本无装饰（同一单元格内多个 <div> 纵向排列，内部已转义）。
@@ -88,7 +137,7 @@ function baseStatsLinesHtml(it){
 // 仅用于法宝库/清单表格；结果页等其他展示仍用 bonusControlHtml/bonusDescription。
 function bonusLinesHtml(it){
   const kind = bonusKind(it);
-  const pill = kind === 'provider' ? '<div><span class="pill green">提升相邻同属性</span></div>'
+  const pill = kind === 'provider' ? '<div><span class="pill green">提升相邻</span></div>'
     : kind === 'self' ? '<div><span class="pill">提升自己</span></div>'
     : '<div><span class="pill gray">无</span></div>';
   const parts = [];
@@ -107,10 +156,15 @@ function renderItemsTable(){
   const tbody = document.querySelector('#itemsTable tbody');
   tbody.innerHTML = '';
   const attrFilter = libraryFilterAttribute();
-  // 按属性筛选；同属性同名的法宝归并为一个家族（分组键 属性+名称，库中名称不跨属性冲突），保持首次出现顺序。
+  const kindFilter = libraryFilterKind();
+  // 按属性筛选（属性罗盘选定单一属性）；同属性同名的法宝归并为一个家族（分组键 属性+名称，库中名称不跨属性冲突），保持首次出现顺序。
+  // 种类筛选：未选择→不显示；全部→显示该属性全部；单一种类→仅该种类。
   const families = new Map();
   itemDefs.forEach((it, idx)=>{
     if(attrFilter && it.attribute !== attrFilter) return;
+    const k = itemKind(it);
+    if(kindFilter === '') return;
+    if(kindFilter !== '全部' && k !== kindFilter) return;
     const key = it.attribute + '|' + it.name;
     if(!families.has(key)) families.set(key, []);
     families.get(key).push({it, idx});

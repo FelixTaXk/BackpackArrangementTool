@@ -1,4 +1,4 @@
-// config.js —— 常量与数据校验（属性/品质注册表、法宝数据库校验）。加载顺序 2/13，依赖 data/talisman-db.js。
+// config.js —— 常量与数据校验（属性/品质注册表、法宝数据库校验）。加载顺序 2/19，依赖 data/talisman-db.js。
 'use strict';
 
 const QUALITY_OPTIONS = [
@@ -32,7 +32,7 @@ const ATTRIBUTE_OPTIONS = [
   {id:'火', name:'火', displayColor:'#b91c1c'},
   {id:'土', name:'土', displayColor:'#a16207'},
   {id:'雷', name:'雷', displayColor:'#7c3aed'},
-  {id:'邪', name:'邪', displayColor:'#c0392b'},
+  {id:'邪', name:'邪', displayColor:'#1a1a1a'},
   {id:'体', name:'体', displayColor:'#be185d'}
 ];
 const ATTRIBUTE_MAP = Object.fromEntries(ATTRIBUTE_OPTIONS.map(a=>[a.id,a]));

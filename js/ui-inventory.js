@@ -1,4 +1,4 @@
-// ui-inventory.js —— 已有法宝清单卡片：清单渲染/格数统计/添加与重编号。加载顺序 8/13，依赖 state、utils、talisman-model。
+// ui-inventory.js —— 已有法宝清单卡片：清单渲染/格数统计/添加与重编号。加载顺序 8/19，依赖 state、utils、talisman-model。
 'use strict';
 
 // 长老星级下拉选项 HTML（表驱动，文案纯「N星」）；selectedLv 缺省选 1 星。
