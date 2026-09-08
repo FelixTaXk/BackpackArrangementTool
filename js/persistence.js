@@ -15,7 +15,9 @@ function saveConfig(){
     // 权重口径开关：存 select 原始值（default/custom）；读取侧白名单校验，缺失/非法不触碰 DOM，schemaVersion 不变
     weightMode:(document.getElementById('weightMode') || {}).value,
     nodeLimit:Number(document.getElementById('nodeLimit').value)||2500000,
-    timeLimit:Number(document.getElementById('timeLimit').value)||20000,
+    // 时间上限/停滞提前结束单位在界面上为秒（与内部 ms 解耦）。旧存档存的是 ms，
+    // 加载侧依据阈值（>3600）判别并折算，保证跨版本恢复不炸。
+    timeLimit:Number(document.getElementById('timeLimit').value)||30,
     parallelSearch:document.getElementById('parallelSearch').checked,
     workerCount:Number(document.getElementById('workerCount').value)||2,
     // 存档绑定数据库版本：读取时比对，防止 id 复用导致同 id 指向不同法宝而不自知。
@@ -48,11 +50,17 @@ function applySharedSettings(data){
     document.getElementById('searchMode').value = data.searchMode;
     // 程序化赋值不会触发 change 事件，手动同步限制输入框的 disabled 状态（快速档禁用）。
     const deep = data.searchMode === 'deep';
-    document.getElementById('nodeLimit').disabled = !deep;
     document.getElementById('timeLimit').disabled = !deep;
   }
   if(Number(data.nodeLimit) >= 1000) document.getElementById('nodeLimit').value = String(Math.floor(Number(data.nodeLimit)));
-  if(Number(data.timeLimit) >= 100) document.getElementById('timeLimit').value = String(Math.floor(Number(data.timeLimit)));
+  // 时间上限单位由 ms 改为秒：旧存档存 ms（≥3600 秒的量级不可能以秒出现，用此判据迁移），
+  // 新存档直接是秒。折算后钳制在 [1, 3600] 秒合理范围。
+  const tl = Number(data.timeLimit);
+  if(Number.isFinite(tl) && tl > 0){
+    const seconds = tl > 3600 ? Math.max(1, Math.round(tl / 1000)) : Math.min(3600, Math.max(1, Math.round(tl)));
+    document.getElementById('timeLimit').value = String(seconds);
+  }
+  // 自动早停（无 UI readout）：阈值由 solveAndRender 内部按「最长×1/3」推导；此处不触碰 DOM。
   // 求解引擎已统一为 SA（老引擎退役），旧存档中的 engineMode 字段直接忽略。
   // 加成聚焦：须属 bonusStats id 否则回退 ''（老存档无此键行为不变）。
   const focusStatKeys = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id);
@@ -136,4 +144,85 @@ function exportResult(){
   a.download = 'bag-solver-result.json';
   a.click();
   setTimeout(()=>URL.revokeObjectURL(url), 10000);
+}
+
+// 清单导入导出 schema（v1）：仅存必要字段（id + customPriority + starLevel + no），
+// 与 saveConfig 中的 inventory 序列化口径一致；读档侧按 id 反查当前数据库重建。
+// 导出文件名带本地日期时间戳便于多版本管理。
+function exportInventory(){
+  const data = {
+    schemaVersion: 1,
+    type: 'bag-solver-inventory',
+    dbVersion: (window.TALISMAN_DB && window.TALISMAN_DB.meta && window.TALISMAN_DB.meta.version) ?? null,
+    exportedAt: new Date().toISOString(),
+    inventory: inventory.map(x => ({
+      id: x.id,
+      no: x.no,
+      customPriority: x.customPriority ?? null,
+      starLevel: x.starLevel ?? null
+    }))
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json;charset=utf-8'});
+  const a = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  a.href = url;
+  const ts = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  a.download = `法宝清单-${ts.getFullYear()}${pad(ts.getMonth()+1)}${pad(ts.getDate())}-${pad(ts.getHours())}${pad(ts.getMinutes())}.json`;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 10000);
+}
+
+// 清单导入：先校验 schema/类型，再按用户选择「追加」或「替换」合并；缺失的 id 在数据库中查不到时跳过并汇总提示。
+// 成功合并后重建 uid 触发 UI 重渲染并清空上一次求解结果（导入后配置已变）。
+function importInventoryFromText(text){
+  let data;
+  try{ data = JSON.parse(text); }catch(e){
+    alert('文件不是合法 JSON：' + e.message);
+    return;
+  }
+  if(!data || typeof data !== 'object'){ alert('文件内容不是对象。'); return; }
+  if(data.type !== 'bag-solver-inventory'){ alert('文件类型不匹配，应为「法宝清单」导出文件。'); return; }
+  if(!Array.isArray(data.inventory)){ alert('文件缺少 inventory 数组。'); return; }
+  const records = data.inventory.filter(r => r && typeof r === 'object' && r.id);
+  if(records.length === 0){ alert('清单为空。'); return; }
+  const currentLen = inventory.length;
+  const mode = currentLen === 0 ? 'replace' : (confirm(`当前清单已有 ${currentLen} 件法宝。\n确定：替换为导入清单（现有法宝会被清空）。\n取消：追加到当前清单末尾。`) ? 'replace' : 'append');
+  const base = mode === 'replace' ? [] : inventory.slice();
+  const missing = [];
+  const nextNoBase = base.length > 0 ? Math.max(...base.map(x => Number(x.no) || 0)) + 1 : 1;
+  let nextNo = nextNoBase;
+  for(const rec of records){
+    // 透传 customPriority/starLevel（缺键视为 null），构造与 saveConfig 读档一致的最小记录。
+    const item = normalizeItemRecord({
+      id: rec.id,
+      no: nextNo,
+      customPriority: rec.customPriority,
+      starLevel: rec.starLevel
+    });
+    if(!item){ missing.push(String(rec.id)); continue; }
+    item.uid = 'inv-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+    base.push(item);
+    nextNo++;
+  }
+  inventory = base;
+  if(mode === 'replace') nextItemNo = nextNo; else nextItemNo = nextNo;
+  lastResult = null;
+  renderSpaceGrid(); renderItemsTable(); renderInventoryTable(); renderResultGrid(null);
+  const summary = mode === 'replace' ? '已替换' : '已追加';
+  if(missing.length){
+    alert(`${summary} ${records.length - missing.length}/${records.length} 件法宝。以下 id 在当前数据库中不存在，已跳过：${missing.join('、')}`);
+  }else{
+    alert(`${summary} ${records.length} 件法宝。`);
+  }
+}
+function importInventoryFromFile(file){
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e){
+    const text = String(e.target.result || '');
+    importInventoryFromText(text);
+  };
+  reader.onerror = function(){ alert('读取文件失败：' + (reader.error && reader.error.message || '未知错误')); };
+  reader.readAsText(file, 'utf-8');
 }

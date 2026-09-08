@@ -126,6 +126,9 @@ button.compact{padding:5px 12px;font-size:12px}
 .btn-sub{display:block;font-size:10px;font-weight:400;letter-spacing:.02em;opacity:.85;margin-top:1px}
 /* ============ 属性罗盘条（灵枢宝鉴底部圆徽） ============ */
 .filter-row{align-items:center}
+/* 重新加载法宝数据库按钮：单独一行，靠右（法宝库卡片内） */
+.library-actions{justify-content:flex-end}
+.library-reset{font-size:12px}
 .filter-label{font-family:var(--font-display);letter-spacing:.12em;color:var(--ink)}
 .attr-compass{
   display:inline-flex;align-items:center;gap:7px;flex-wrap:wrap;
