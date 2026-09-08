@@ -19,10 +19,10 @@
 var ewModel = null, ewMeta = null;
 var occ = null, cellOwner = null, solPl = null, placedOrder = null, invPlaced = null;
 var touchStamp = null, touchEpoch = 0;
-var curBase = 0, curBonus = 0, curManW = 0, curDefW = 0, curDmg = 0, curAdj = 0, curItems = 0, curArea = 0;
+var curBase = 0, curBonus = 0, curManW = 0, curDefW = 0, curDmg = 0, curAdj = 0, curSameAttr = 0, curItems = 0, curArea = 0;
 var curEnergy = 0; // 当前标量能量缓存：随 apply/remove 增量维护，避免主循环每迭代重算
 var bestSol = null, bestEnergy = Infinity, bestComplete = false, bestBase = 0, bestBonus = 0;
-var bestManW = 0, bestDefW = 0, bestDmg = 0, bestAdj = 0, bestItems = 0, bestArea = 0;
+var bestManW = 0, bestDefW = 0, bestDmg = 0, bestAdj = 0, bestSameAttr = 0, bestItems = 0, bestArea = 0;
 var rngS0 = 0, rngS1 = 0;
 var curT = 1, T0 = 1, Tmin = 0, expTable = null;
 var iters = 0, started = 0, deadline = 0, stoppedFlag = false;
@@ -35,12 +35,12 @@ var lastProgress = 0, lastIncumbent = 0, lastSwapReq = 0;
 var bfsVisited = null, bfsQueue = null, regionStamp = null, touchedList = null;
 var requiredItemsTarget = 0; // placedCount + skippedCount === requiredTotalItems 即 complete
 // 复用的增量容器（约定同一时刻只有一份活跃 delta，热路径零分配）
-var DELTA = {bonus:0, manW:0, defW:0, dmg:0, adj:0};
+var DELTA = {bonus:0, manW:0, defW:0, dmg:0, adj:0, sameAttr:0};
 // undo 栈：apply/remove 时压入反向操作，拒绝回滚 O(算子改动数)；单迭代最多 ≤ 8 次 apply/remove
 var ewUndoIt = null, ewUndoPl = null, ewUndoTop = 0, ewUndoSuspend = false;
 // 环邻接表（init 期预算）：每摆放的外圈格子列表；配合 cellOwner 实现 O(环长) 增量扫描，
 // 避开 CSR 大度数（plen 多时 CSR 度可达上百条边）；pair 分值同步预算为 I×I 表
-var ewNbrOff = null, ewNbrCell = null, ewPairBonus = null, ewPairManW = null, ewPairDefW = null, ewPairDmg = null;
+var ewNbrOff = null, ewNbrCell = null, ewPairBonus = null, ewPairManW = null, ewPairDefW = null, ewPairDmg = null, ewPairSameAttr = null;
 var ewRefineTopBuf = null; // removeInsert 未放件价值 top-6 复用缓冲（热路径零分配）
 var ewScratchSol = null;   // 收尾多端点精化的当前解缓冲
 
@@ -62,7 +62,7 @@ function ewRandInt(n){ return (ewRand() * n) | 0; }
 
 // ------------------------- 能量与最优比较 -------------------------
 function ewCompleteFlag(){ return curItems + ((ewMeta && ewMeta.skippedCount) || 0) === requiredItemsTarget; }
-function ewScalarOf(c, base, bonus, manW, defW, adj, items, area){
+function ewScalarOf(c, base, bonus, manW, defW, adj, sameAttr, items, area){
   const total = base + bonus;
   // 标量化与字典序对齐（P2 根因修复）：cmpBest 优先级 total > manW > defW > adj，但
   // manW/defW 单步变化量（可达 1e10+）远超 Δtotal，入能量会把搜索降级为 defW 驱动，
@@ -70,18 +70,24 @@ function ewScalarOf(c, base, bonus, manW, defW, adj, items, area){
   // totalScore 差 1-5 分的 bonus 位形挤出去（SA adj 偏大却 bonus 略低），
   // 与字典序（total 先于 adj）方向相反；降为 1e-3 尾部平手项，保证任何 Δtotal≥0.01
   // 都压过任意 Δadj，与 compareSolverBest 口径一致。
-  return -((c ? 1e12 : 0) + total + items + 1e-3 * adj + 1e-4 * area);
+  // sameAttr（同元素贴邻对数）仅作更弱尾部平手项（1e-5），比 adj 再低一档，避免挤掉 bonus 位形；
+  // 真正驱动聚类的是字典序 sameAttr 破平项（ewBetterLex），能量只作平手辅助。
+  return -((c ? 1e12 : 0) + total + items + 1e-3 * adj + 1e-5 * sameAttr + 1e-4 * area);
 }
 function ewCurrentScalar(){
   return curEnergy;
 }
-// 字典序比较（对齐旧 compareEvaluationObjects 的优先级序：complete>total>manW>defW>dmg>adj>items>area）
-// dmg = 伤害贴邻 bond 计数：并入默认优先级软档之后、几何相邻之前的“最后破平”项（加成法宝贴同属性伤害法宝）。
-function ewBetterLex(c1, total1, mw1, dw1, dmg1, adj1, it1, ar1, c2, total2, mw2, dw2, dmg2, adj2, it2, ar2){
+// 字典序比较（对齐旧 compareEvaluationObjects 的优先级序：complete>total>manW>defW>sameAttr>dmg>adj>items>area）
+// sameAttr = 同元素属性贴邻对数（仅 clusterByElement 开启时为信号；关闭时 caller 传 0），
+// 位于 defW 之后、dmg 之前——比总邻接数更靠前，让"按元素聚类"成为正式破平项，但仍让位
+// total/manW/defW 这些高优破平，避免为聚类牺牲明显总属性收益。
+// dmg = 伤害贴邻 bond 计数：并入默认优先级软档之后、几何相邻之前的"最后破平"项（加成法宝贴同属性伤害法宝）。
+function ewBetterLex(c1, total1, mw1, dw1, sa1, dmg1, adj1, it1, ar1, c2, total2, mw2, dw2, sa2, dmg2, adj2, it2, ar2){
   if(c1 !== c2) return c1 ? true : false;
   if(Math.abs(total1 - total2) > 1e-9) return total1 > total2;
   if(Math.abs(mw1 - mw2) > 1e-9) return mw1 > mw2;
   if(Math.abs(dw1 - dw2) > 1e-9) return dw1 > dw2;
+  if(sa1 !== sa2) return sa1 > sa2;
   if(dmg1 !== dmg2) return dmg1 > dmg2;
   if(adj1 !== adj2) return adj1 > adj2;
   if(it1 !== it2) return it1 > it2;
@@ -141,6 +147,7 @@ function ewBuildNeighborTables(m){
   ewPairManW = new Float64Array(I * I);
   ewPairDefW = new Float64Array(I * I);
   ewPairDmg = new Uint8Array(I * I); // 伤害贴邻 bond（同属性 + 一端加成一端造成伤害），0/1
+  ewPairSameAttr = new Uint8Array(I * I); // 同元素属性贴邻标记（0/1，按 attribute 字段判定，与 score-shared 同口径）
   const tmpA = {sv:null, rv:null, bonusKind:'none', attribute:undefined}, tmpB = {sv:null, rv:null, bonusKind:'none', attribute:undefined};
   const kindName = k => (k === 1 ? 'provider' : k === 2 ? 'self' : 'none');
   const dmgOf = i => (m.itemDmg && m.itemDmg[i]) ? true : false;
@@ -153,6 +160,11 @@ function ewBuildNeighborTables(m){
     const ki = m.itemKind[ai], kj = m.itemKind[aj];
     const aBonus = ki === 1 || ki === 2, bBonus = kj === 1 || kj === 2;
     return (aBonus && dmgOf(aj)) || (bBonus && dmgOf(ai));
+  };
+  // 同元素属性贴邻标记：i/j 同 attribute（两边都非 255 且相等）。不开关时此值仍预算，
+  // ewScanAdj 在开关关闭时跳过累加，保持扫描开销接近零。
+  const sameAttrOf = (ai, aj) => {
+    return (m.itemAttr[ai] !== 255 && m.itemAttr[ai] === m.itemAttr[aj]) ? 1 : 0;
   };
   for(let i = 0; i < I; i++){
     const mwI = m.itemManual[i] >= 0 ? 100000000 * Math.max(1, m.manualCount - m.itemManual[i]) : 0;
@@ -168,6 +180,7 @@ function ewBuildNeighborTables(m){
       ewPairManW[i * I + j] = mwI + mwJ;
       ewPairDefW[i * I + j] = dwI + dwJ;
       ewPairDmg[i * I + j] = isBond(i, j) ? 1 : 0;
+      ewPairSameAttr[i * I + j] = sameAttrOf(i, j);
       tmpB.sv = m.itemStats.subarray(j * K, j * K + K);
       tmpB.rv = m.itemRates.subarray(j * K, j * K + K);
       tmpB.bonusKind = kindName(m.itemKind[j]);
@@ -182,8 +195,9 @@ function ewScanAdj(p, sign){
   const m = ewModel, I = m.I;
   touchEpoch++;
   const itSelf = m.plItem[p];
-  let bonus = 0, manW = 0, defW = 0, dmg = 0, adj = 0;
+  let bonus = 0, manW = 0, defW = 0, dmg = 0, adj = 0, sameAttr = 0;
   const n0 = ewNbrOff[p], n1 = ewNbrOff[p + 1];
+  const clusterOn = ewMeta && ewMeta.clusterByElement;
   for(let e = n0; e < n1; e++){
     const it = cellOwner[ewNbrCell[e]];
     if(it < 0 || it === itSelf) continue;
@@ -195,9 +209,10 @@ function ewScanAdj(p, sign){
     manW += ewPairManW[ij];
     defW += ewPairDefW[ij];
     dmg += ewPairDmg[ij]; // 伤害贴邻 bond 计数（对称表，每相邻物品对计一次）
+    if(clusterOn && ewPairSameAttr[ij]) sameAttr++; // 同元素属性贴邻对数（开关关闭时 0 开销）
   }
   // 按 sign 返回带符号增量：+1 放入为增，-1 撤除为减（ewApplyRemove 直接 += 即可）
-  DELTA.bonus = sign * bonus; DELTA.manW = sign * manW; DELTA.defW = sign * defW; DELTA.dmg = sign * dmg; DELTA.adj = sign * adj;
+  DELTA.bonus = sign * bonus; DELTA.manW = sign * manW; DELTA.defW = sign * defW; DELTA.dmg = sign * dmg; DELTA.adj = sign * adj; DELTA.sameAttr = sign * sameAttr;
   return DELTA;
 }
 // 摆放 p 的单项增量（base/items/area 直接给，邻接分量走 ewScanAdj）
@@ -214,7 +229,7 @@ function ewDeltaE(d){
   const items2 = curItems + d.items;
   const c2 = items2 + (ewMeta.skippedCount || 0) === requiredItemsTarget;
   const e2 = ewScalarOf(c2, curBase + d.base, useB ? curBonus + d.bonus : 0,
-    curManW + d.manW, curDefW + d.defW, curAdj + d.adj, items2, curArea + d.area);
+    curManW + d.manW, curDefW + d.defW, curAdj + d.adj, curSameAttr + d.sameAttr, items2, curArea + d.area);
   return e2 - curEnergy; // 当前能量已缓存，免重算 e1
 }
 
@@ -230,9 +245,9 @@ function ewApplyAdd(it, p){
   curItems++;
   ewOccAdd(p);
   curBase += d.base; curBonus += d.bonus; curManW += d.manW; curDefW += d.defW; curDmg += d.dmg;
-  curAdj += d.adj; curArea += d.area;
+  curAdj += d.adj; curSameAttr += d.sameAttr; curArea += d.area;
   // 物品数变化 → complete 可能翻转，全量重算能量
-  curEnergy = ewScalarOf(ewCompleteFlag(), curBase, ewMeta.useBonus ? curBonus : 0, curManW, curDefW, curAdj, curItems, curArea);
+  curEnergy = ewScalarOf(ewCompleteFlag(), curBase, ewMeta.useBonus ? curBonus : 0, curManW, curDefW, curAdj, curSameAttr, curItems, curArea);
   if(!ewUndoSuspend && ewUndoTop < ewUndoIt.length){ ewUndoIt[ewUndoTop] = it; ewUndoPl[ewUndoTop] = -1; ewUndoTop++; } // 反向=移除
 }
 function ewApplyRemove(it){
@@ -240,7 +255,7 @@ function ewApplyRemove(it){
   if(p < 0) return -1;
   const d = ewDeltaFor(p, -1);
   curBase += d.base; curBonus += d.bonus; curManW += d.manW; curDefW += d.defW; curDmg += d.dmg;
-  curAdj += d.adj; curArea += d.area;
+  curAdj += d.adj; curSameAttr += d.sameAttr; curArea += d.area;
   ewOccRemove(p);
   solPl[it] = -1;
   const pos = invPlaced[it];
@@ -250,7 +265,7 @@ function ewApplyRemove(it){
   curItems--;
   invPlaced[it] = -1;
   // 物品数变化 → complete 可能翻转，全量重算能量
-  curEnergy = ewScalarOf(ewCompleteFlag(), curBase, ewMeta.useBonus ? curBonus : 0, curManW, curDefW, curAdj, curItems, curArea);
+  curEnergy = ewScalarOf(ewCompleteFlag(), curBase, ewMeta.useBonus ? curBonus : 0, curManW, curDefW, curAdj, curSameAttr, curItems, curArea);
   if(!ewUndoSuspend && ewUndoTop < ewUndoIt.length){ ewUndoIt[ewUndoTop] = it; ewUndoPl[ewUndoTop] = p; ewUndoTop++; } // 反向=放回 p
   return p;
 }
@@ -262,14 +277,14 @@ function ewApplyMove(it, pNew){
 // ------------------------- 晋级（copyToBest） -------------------------
 function ewPartsOfBest(){
   return {complete: bestComplete, area: bestArea, base: bestBase, bonus: bestBonus,
-    total: bestBase + bestBonus, adj: bestAdj, items: bestItems,
+    total: bestBase + bestBonus, adj: bestAdj, sameAttr: bestSameAttr, items: bestItems,
     manW: bestManW, defW: bestDefW, dmg: bestDmg, bestBase, bestBonus, T0};
 }
 function ewCopyToBest(){
   bestSol.set(solPl);
   bestComplete = ewCompleteFlag();
   bestBase = curBase; bestBonus = curBonus; bestManW = curManW; bestDefW = curDefW; bestDmg = curDmg;
-  bestAdj = curAdj; bestItems = curItems; bestArea = curArea;
+  bestAdj = curAdj; bestSameAttr = curSameAttr; bestItems = curItems; bestArea = curArea;
   bestEnergy = ewCurrentScalar();
 }
 function ewBetterThanBest(){
@@ -277,8 +292,8 @@ function ewBetterThanBest(){
   if(e < bestEnergy - 1e-9) return true;
   if(e > bestEnergy + 1e-9) return false;
   const c = ewCompleteFlag();
-  return ewBetterLex(c, curBase + curBonus, curManW, curDefW, curDmg, curAdj, curItems, curArea,
-    bestComplete, bestBase + bestBonus, bestManW, bestDefW, bestDmg, bestAdj, bestItems, bestArea);
+  return ewBetterLex(c, curBase + curBonus, curManW, curDefW, curSameAttr, curDmg, curAdj, curItems, curArea,
+    bestComplete, bestBase + bestBonus, bestManW, bestDefW, bestSameAttr, bestDmg, bestAdj, bestItems, bestArea);
 }
 function ewMaybePromote(now){
   if(!ewBetterThanBest()) return;
@@ -820,7 +835,7 @@ function ewLnsSearch(bE, bTotal, bItems, hardMs, nodeCap){
     ewApplyAdd(it, q);
     any = true;
     if(depth + 1 === n){ // 叶子：全池已放，评估晋级
-      const eNow = ewScalarOf(true, curBase, ewMeta.useBonus ? curBonus : 0, curManW, curDefW, curAdj, curItems, curArea);
+      const eNow = ewScalarOf(true, curBase, ewMeta.useBonus ? curBonus : 0, curManW, curDefW, curAdj, curSameAttr, curItems, curArea);
       if(eNow < bestE - 1e-9){ // 严格改进才晋级（平手留给外层 SA 会引入平台随机游走退化）
         bestE = eNow; bestItems = curItems; ewLnsBestSol.set(solPl); ewLnsBestItems = curItems;
       }
@@ -835,7 +850,7 @@ function ewLnsSearch(bE, bTotal, bItems, hardMs, nodeCap){
   // 回溯清空残栈（恢复拆除后状态）
   while(sp > 0){ sp--; ewApplyRemove(ewLnsStackIt[sp]); }
   ewUndoSuspend = false;
-  curEnergy = ewScalarOf(ewCompleteFlag(), curBase, ewMeta.useBonus ? curBonus : 0, curManW, curDefW, curAdj, curItems, curArea);
+  curEnergy = ewScalarOf(ewCompleteFlag(), curBase, ewMeta.useBonus ? curBonus : 0, curManW, curDefW, curAdj, curSameAttr, curItems, curArea);
   const improved = any && bestE < bE - 1e-9; // 严格优于 before 才应用（拒绝平手，防外层 SA 平台随机游走）
   if(improved){
     for(let it = 0; it < I; it++) if(solPl[it] >= 0) ewApplyRemove(it);
@@ -944,7 +959,7 @@ function ewInitialSolution(){
   occ.fill(0);
   cellOwner.fill(-1);
   solPl.fill(-1);
-  curItems = 0; curBase = 0; curBonus = 0; curManW = 0; curDefW = 0; curDmg = 0; curAdj = 0; curArea = 0;
+  curItems = 0; curBase = 0; curBonus = 0; curManW = 0; curDefW = 0; curDmg = 0; curAdj = 0; curSameAttr = 0; curArea = 0;
   ewUndoSuspend = true; ewUndoTop = 0; // 构建期不记 undo
   const spread = m.I > 1 ? m.globalMaxBonus / m.I : 0;
   const order = new Array(m.I);
@@ -982,7 +997,7 @@ function ewInitialSolution(){
     if(bestP >= 0) ewApplyAdd(it, bestP);
   }
   ewUndoSuspend = false; ewUndoTop = 0;
-  curEnergy = ewScalarOf(ewCompleteFlag(), curBase, ewMeta.useBonus ? curBonus : 0, curManW, curDefW, curAdj, curItems, curArea);
+  curEnergy = ewScalarOf(ewCompleteFlag(), curBase, ewMeta.useBonus ? curBonus : 0, curManW, curDefW, curAdj, curSameAttr, curItems, curArea);
   ewCopyToBest();
 }
 
@@ -992,7 +1007,7 @@ function ewLoadSolution(sol){
   occ.fill(0);
   cellOwner.fill(-1);
   solPl.fill(-1);
-  curItems = 0; curBase = 0; curBonus = 0; curManW = 0; curDefW = 0; curDmg = 0; curAdj = 0; curArea = 0;
+  curItems = 0; curBase = 0; curBonus = 0; curManW = 0; curDefW = 0; curDmg = 0; curAdj = 0; curSameAttr = 0; curArea = 0;
   ewUndoSuspend = true; ewUndoTop = 0; // 重建期不记 undo
   for(let i = 0; i < m.I && i < sol.length; i++){
     const p = sol[i];
@@ -1002,7 +1017,7 @@ function ewLoadSolution(sol){
     ewApplyAdd(i, p);
   }
   ewUndoSuspend = false;
-  curEnergy = ewScalarOf(ewCompleteFlag(), curBase, ewMeta.useBonus ? curBonus : 0, curManW, curDefW, curAdj, curItems, curArea);
+  curEnergy = ewScalarOf(ewCompleteFlag(), curBase, ewMeta.useBonus ? curBonus : 0, curManW, curDefW, curAdj, curSameAttr, curItems, curArea);
   if(ewBetterThanBest()) ewCopyToBest();
 }
 
@@ -1036,7 +1051,8 @@ function ewSendDone(now){
     fullSearchCutoff: false, optimizationCutoff: false, fallbackCutoff: false,
     totalArea: ewMeta.requiredTotalArea, totalBase: ewMeta.requiredTotalBase,
     totalItems: ewMeta.requiredTotalItems, assignmentStrategy: 'sa_alns',
-    singletonDeferredCount: 0, assignmentChecks: iters, engine: 'sa'
+    singletonDeferredCount: 0, assignmentChecks: iters, engine: 'sa',
+    sameAttrAdj: ewMeta && ewMeta.clusterByElement ? bestSameAttr : 0
   });
 }
 
@@ -1306,7 +1322,7 @@ function ewFinishPolish(){
     if(performance.now() >= polishDeadline) break;
     ewScratchSol.set(bestSol);
     const sE = bestEnergy, sC = bestComplete, sB = bestBase, sBo = bestBonus;
-    const sMw = bestManW, sDw = bestDefW, sDmg = bestDmg, sAdj = bestAdj, sIt = bestItems, sAr = bestArea;
+    const sMw = bestManW, sDw = bestDefW, sSa = bestSameAttr, sDmg = bestDmg, sAdj = bestAdj, sIt = bestItems, sAr = bestArea;
     if(trial < 2){
       ewInitialSolution();
     }else{
@@ -1317,12 +1333,12 @@ function ewFinishPolish(){
     ewRefineSolution(true);
     const better = ewCurrentScalar() < sE - 1e-9 || (
       Math.abs(ewCurrentScalar() - sE) <= 1e-9 &&
-      ewBetterLex(ewCompleteFlag(), curBase + curBonus, curManW, curDefW, curDmg, curAdj, curItems, curArea,
-        sC, sB + sBo, sMw, sDw, sDmg, sAdj, sIt, sAr));
+      ewBetterLex(ewCompleteFlag(), curBase + curBonus, curManW, curDefW, curSameAttr, curDmg, curAdj, curItems, curArea,
+        sC, sB + sBo, sMw, sDw, sSa, sDmg, sAdj, sIt, sAr));
     if(!better){
       bestSol.set(ewScratchSol);
       bestEnergy = sE; bestComplete = sC; bestBase = sB; bestBonus = sBo;
-      bestManW = sMw; bestDefW = sDw; bestDmg = sDmg; bestAdj = sAdj; bestItems = sIt; bestArea = sAr;
+      bestManW = sMw; bestDefW = sDw; bestSameAttr = sSa; bestDmg = sDmg; bestAdj = sAdj; bestItems = sIt; bestArea = sAr;
     }
   }
   // 把当前状态恢复到 best（后续上报 parts 与 sol 一致）
@@ -1396,16 +1412,16 @@ function ewRunChunk(){
         if(!ewScratchSol) ewScratchSol = new Int32Array(ewModel.I);
         ewScratchSol.set(bestSol);
         const sE = bestEnergy, sC = bestComplete, sB = bestBase, sBo = bestBonus;
-        const sMw = bestManW, sDw = bestDefW, sDmg = bestDmg, sAdj = bestAdj, sIt = bestItems, sAr = bestArea;
+        const sMw = bestManW, sDw = bestDefW, sSa = bestSameAttr, sDmg = bestDmg, sAdj = bestAdj, sIt = bestItems, sAr = bestArea;
         ewInitialSolution();
         const better = ewCurrentScalar() < sE - 1e-9 || (
           Math.abs(ewCurrentScalar() - sE) <= 1e-9 &&
-          ewBetterLex(ewCompleteFlag(), curBase + curBonus, curManW, curDefW, curDmg, curAdj, curItems, curArea,
-            sC, sB + sBo, sMw, sDw, sDmg, sAdj, sIt, sAr));
+          ewBetterLex(ewCompleteFlag(), curBase + curBonus, curManW, curDefW, curSameAttr, curDmg, curAdj, curItems, curArea,
+            sC, sB + sBo, sMw, sDw, sSa, sDmg, sAdj, sIt, sAr));
         if(!better){
           bestSol.set(ewScratchSol);
           bestEnergy = sE; bestComplete = sC; bestBase = sB; bestBonus = sBo;
-          bestManW = sMw; bestDefW = sDw; bestDmg = sDmg; bestAdj = sAdj; bestItems = sIt; bestArea = sAr;
+          bestManW = sMw; bestDefW = sDw; bestSameAttr = sSa; bestDmg = sDmg; bestAdj = sAdj; bestItems = sIt; bestArea = sAr;
         }
         // 从新贪心解继续退火（不回载 best：重启的意义就是探索新盆地）
       }else{
@@ -1550,10 +1566,10 @@ function engWorkerStateDecls(){
   return 'var ewModel=null,ewMeta=null;'
     + 'var occ=null,cellOwner=null,solPl=null,placedOrder=null,invPlaced=null;'
     + 'var touchStamp=null,touchEpoch=0;'
-    + 'var curBase=0,curBonus=0,curManW=0,curDefW=0,curDmg=0,curAdj=0,curItems=0,curArea=0;'
+    + 'var curBase=0,curBonus=0,curManW=0,curDefW=0,curDmg=0,curAdj=0,curSameAttr=0,curItems=0,curArea=0;'
     + 'var curEnergy=0;'
     + 'var bestSol=null,bestEnergy=Infinity,bestComplete=false,bestBase=0,bestBonus=0;'
-    + 'var bestManW=0,bestDefW=0,bestDmg=0,bestAdj=0,bestItems=0,bestArea=0;'
+    + 'var bestManW=0,bestDefW=0,bestDmg=0,bestAdj=0,bestSameAttr=0,bestItems=0,bestArea=0;'
     + 'var rngS0=0,rngS1=0;'
     + 'var curT=1,T0=1,Tmin=0,expTable=null;'
     + 'var iters=0,started=0,deadline=0,stoppedFlag=false;'
@@ -1563,10 +1579,10 @@ function engWorkerStateDecls(){
     + 'var lastProgress=0,lastIncumbent=0,lastSwapReq=0;'
     + 'var bfsVisited=null,bfsQueue=null,regionStamp=null,touchedList=null;'
     + 'var requiredItemsTarget=0;'
-    + 'var DELTA={bonus:0,manW:0,defW:0,adj:0};'
+    + 'var DELTA={bonus:0,manW:0,defW:0,dmg:0,adj:0,sameAttr:0};'
     + 'var ewMsgQueue=[];'
     + 'var ewUndoIt=null,ewUndoPl=null,ewUndoTop=0,ewUndoSuspend=false;'
-    + 'var ewNbrOff=null,ewNbrCell=null,ewPairBonus=null,ewPairManW=null,ewPairDefW=null,ewPairDmg=null;'
+    + 'var ewNbrOff=null,ewNbrCell=null,ewPairBonus=null,ewPairManW=null,ewPairDefW=null,ewPairDmg=null,ewPairSameAttr=null;'
     + 'var ewRefineTopBuf=null;'
     + 'var ewScratchSol=null;'
     + 'var ewNodeLimit=0,ewLastReheatIter=0;\n'

@@ -93,7 +93,7 @@ function engOrchCreateWorkers(opts){
         seedOffset: Math.imul(workers.length + 1, 0x85ebca6b), // 随最终下标唯一的随机种子
         nodeLimit: payload.nodeLimit, timeLimit: payload.timeLimit,
         stallLimit: payload.stallLimit || 0, minRunMs: payload.minRunMs || 0,
-        useBonus: payload.useBonus,
+        useBonus: payload.useBonus, clusterByElement: payload.clusterByElement !== false,
         requiredTotalItems, requiredTotalArea: payload.requiredTotalArea,
         requiredTotalBase: payload.requiredTotalBase, skippedCount,
         tempIndex: n, swapEnabled: temperingOn,
@@ -301,7 +301,8 @@ function engOrchConvertDone(worker, msg){
     assignmentStrategy: msg.assignmentStrategy || 'sa_alns',
     singletonDeferredCount: msg.singletonDeferredCount || 0,
     assignmentChecks: msg.assignmentChecks || 0,
-    engine: msg.engine || 'sa'
+    engine: msg.engine || 'sa',
+    sameAttrAdj: msg.sameAttrAdj || (msg.parts && Number(msg.parts.sameAttr)) || 0
   };
 }
 

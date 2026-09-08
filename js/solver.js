@@ -131,6 +131,7 @@ function renderLiveSolverStatus(){
 当前最好基础值：${bestKnown?formatNum(s.bestBase):'-'}
 当前最好百分比加成：${bestKnown?formatNum(s.bestBonus):'-'}
 当前最好总邻接数量：${bestKnown?(s.bestAdjacency ?? 0):'-'}
+当前同元素贴邻对数：${bestKnown?(s.bestSameAttrAdj ?? 0):'-'}
 当前放入物品：${s.bestItems ?? 0}/${s.totalItems ?? inventory.length}
 当前空间利用：${Math.max(0,Number(s.bestArea)||0)}/${s.activeCells}
 ${s.restarts ? `多起点尝试：${s.restarts}\n` : ''}
@@ -166,6 +167,7 @@ function updateSolverStatusFromMessage(msg,activeCells){
     bestBonus:msg.bestBonus ?? msg.best?.bonusScore ?? solverStatusState.bestBonus,
     bestTotal:msg.bestTotal ?? msg.best?.totalScore ?? solverStatusState.bestTotal,
     bestAdjacency:msg.bestAdjacency ?? msg.best?.adjacencyCount ?? solverStatusState.bestAdjacency,
+    bestSameAttrAdj:msg.bestSameAttrAdj ?? msg.best?.sameAttrAdj ?? solverStatusState.bestSameAttrAdj,
     bestItems:msg.bestItems ?? msg.best?.itemCount ?? solverStatusState.bestItems,
     totalItems:msg.totalItems ?? solverStatusState.totalItems,
     activeCells,
@@ -429,6 +431,7 @@ function solveAndRender(){
     items:serialItems,
     activeMask:maskToDec(activeLo, activeHi), activeCells, W, H, nodeLimit, timeLimit,
     stallLimit, minRunMs, useBonus,
+    clusterByElement: !!(document.getElementById('clusterByElement') && document.getElementById('clusterByElement').checked),
     statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id),
     statCount:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).length,
     manualCount:manualPriorityLevels.length,
@@ -496,7 +499,7 @@ ${weightMul ? `属性权重：${formatWeightVector(weightMul)}（搜索目标 to
       inventory:inventory.map(x=>({...x,cells:cloneCells(x.cells)})),
       settings:{useAdjacencyBonus:useBonus,searchMode,parallelSearch:parallel,workerCount,optimizationOrder:['complete_loading','actual_total_score','manual_priority_neighbors','default_priority_neighbors','total_adjacency_count'],statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>({id:s.id,name:s.name})),manualPriorityRule:'1 is highest; blank uses default rules',assignmentStrategy:'geometry_then_item_assignment',focusAttr},
       skipped:skipped.map(x=>({no:x.no,name:x.name,area:x.area,value:x.value})),manualItems,
-      solverMeta:{stallEnded:stallEndedWorkers>0,stallWorkers:stallEndedWorkers,fullPackingAttempted:meta.fullPackingAttempted,fullPackingFound:meta.fullPackingFound,fullSearchCutoff:meta.fullSearchCutoff,optimizationCutoff:meta.optimizationCutoff,fallbackCutoff:meta.fallbackCutoff,totalArea:meta.totalArea,totalBase:meta.totalBase,totalItems:meta.totalItems,fullGroupCount:meta.fullGroupCount,detailedGroupCount:meta.detailedGroupCount,assignmentStrategy:meta.assignmentStrategy,singletonDeferredCount:meta.singletonDeferredCount,assignmentChecks:meta.assignmentChecks,workerCount,engine:meta.engine||'sa'}
+      solverMeta:{stallEnded:stallEndedWorkers>0,stallWorkers:stallEndedWorkers,fullPackingAttempted:meta.fullPackingAttempted,fullPackingFound:meta.fullPackingFound,fullSearchCutoff:meta.fullSearchCutoff,optimizationCutoff:meta.optimizationCutoff,fallbackCutoff:meta.fallbackCutoff,totalArea:meta.totalArea,totalBase:meta.totalBase,totalItems:meta.totalItems,fullGroupCount:meta.fullGroupCount,detailedGroupCount:meta.detailedGroupCount,assignmentStrategy:meta.assignmentStrategy,singletonDeferredCount:meta.singletonDeferredCount,assignmentChecks:meta.assignmentChecks,workerCount,engine:meta.engine||'sa',sameAttrAdj:meta.sameAttrAdj||0}
     };
     solverWorkers=[]; solverWorker=null; stopSolverStatusHeartbeat(); setSolverRunning(false);
     // 属性权重键仅权重激活时追加（只加法；默认全 1 时不出现，同 focusAttr 条件追加先例）。

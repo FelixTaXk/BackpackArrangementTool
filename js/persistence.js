@@ -6,6 +6,7 @@ function saveConfig(){
     schemaVersion:2,
     W,H,active,
     useAdjacencyBonus:document.getElementById('useAdjacencyBonus').checked,
+    clusterByElement:document.getElementById('clusterByElement') ? document.getElementById('clusterByElement').checked : true,
     searchMode:document.getElementById('searchMode').value,
     // 加成聚焦为可选字段（只加法）；旧存档缺失时读取侧回退 ''（默认·总收益最大化），schemaVersion 不变
     focusAttr:(document.getElementById('focusAttr') || {}).value || '',
@@ -46,6 +47,10 @@ function applySharedSettings(data){
   document.getElementById('gridW').value = W; document.getElementById('gridH').value = H;
   // 旋转/镜像选项已从界面移除并固定为始终允许；旧存档中的对应字段直接忽略。
   document.getElementById('useAdjacencyBonus').checked = data.useAdjacencyBonus === true;
+  if(document.getElementById('clusterByElement')){
+    // 缺省 true：旧存档无 clusterByElement 键时仍默认开启"按元素聚类"，行为对用户透明升级
+    document.getElementById('clusterByElement').checked = data.clusterByElement !== false;
+  }
   if(data.searchMode === 'fast' || data.searchMode === 'deep'){
     document.getElementById('searchMode').value = data.searchMode;
     // 程序化赋值不会触发 change 事件，手动同步限制输入框的 disabled 状态（快速档禁用）。
