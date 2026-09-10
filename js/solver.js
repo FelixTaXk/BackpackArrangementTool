@@ -399,10 +399,21 @@ function solveAndRender(){
   if(items.length===0){ alert('已有物品都无法放入当前空间。请调整空间、旋转/镜像设置或物品清单。'); return; }
   const searchMode=document.getElementById('searchMode').value;
   // 求解引擎统一为 SA（老 DFS 引擎已退役并删除）；fast 档同样走 SA（仅节点/时间上限被收紧，见 engOrchCreateWorkers）。
-  const requestedNodeLimit = Math.max(1000, Number(document.getElementById('nodeLimit').value)||2500000);
-  const requestedTimeLimit = Math.max(100, Number(document.getElementById('timeLimit').value)||20000);
-  const nodeLimit=searchMode==='fast'?Math.min(requestedNodeLimit,350000):requestedNodeLimit;
-  const timeLimit=searchMode==='fast'?Math.min(requestedTimeLimit,3000):requestedTimeLimit;
+  // 时间单位在界面上为秒；此处统一折算为毫秒供引擎消费（timeLimit 内部恒为 ms）。
+  const requestedTimeSec = Math.max(1, Number(document.getElementById('timeLimit').value) || 30);
+  const requestedTimeLimit = Math.round(requestedTimeSec * 1000);
+  // 深度档节点上限不再由界面手动设置：以时间预算 × 每毫秒节点吞吐余量（1e9 级）推导，
+  // 保证在给定 timeLimit 下节点墙永远不会先于时间墙触发——时间/停滞窗才是真正的截止条件。
+  // fast 档沿用旧的收紧上限（节点 35 万 / 时间 3s）不变。
+  const derivedNodeLimit = Math.max(1e9, Math.round(requestedTimeSec * 1e9));
+  const nodeLimit = searchMode === 'fast' ? 350000 : derivedNodeLimit;
+  const timeLimit = searchMode === 'fast' ? Math.min(requestedTimeLimit, 3000) : requestedTimeLimit;
+  // 早停（纯自动，无手填）：停滞窗 stallLimit = 最长时间的 1/3，绝对下界 3s；
+  // 0（仅 fast 档）= 不启用（始终跑满固定 3s）。minRun 兜底开局：总时间 20%、钳在 [2s, 30s]，
+  // 保证初始贪心/标定/首段下降未完成时不被误判为“停滞”。
+  const autoStallMs = Math.max(3000, Math.round(requestedTimeLimit / 3));
+  const stallLimit = searchMode === 'fast' ? 0 : autoStallMs;
+  const minRunMs = searchMode === 'fast' ? 0 : Math.round(Math.min(30000, Math.max(2000, requestedTimeLimit * 0.2)));
   const useBonus = document.getElementById('useAdjacencyBonus').checked;
   const parallel=document.getElementById('parallelSearch').checked;
   const workerLimit=getParallelWorkerLimit();
@@ -421,7 +432,8 @@ function solveAndRender(){
   // Worker 启动负载：由 orchestrator 构建 SoA 模型与 init
   const workerPayload={
     items:serialItems,
-    activeMask:maskToDec(activeLo, activeHi), activeCells, W, H, nodeLimit, timeLimit, useBonus,
+    activeMask:maskToDec(activeLo, activeHi), activeCells, W, H, nodeLimit, timeLimit,
+    stallLimit, minRunMs, useBonus,
     statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id),
     statCount:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).length,
     // rate-only 维起始下标：bonusStats 前 3 维（atk/def/hp）有基础值，其后 dmg/crit/heal/shield/drain
@@ -440,16 +452,17 @@ function solveAndRender(){
   solverWorker=solverWorkers[0];
   setSolverRunning(true);
   startSolverStatusHeartbeat(activeCells, inventory.length);
-  // 生效值可见（任务 7）：未勾选并行时明确单 Worker；workerCount 被硬件上限钳制时显示实际值；fast 档 timeLimit 截断时显示实际生效值。
+  // 生效值可见（任务 7 继承）：未勾选并行时明确单 Worker；workerCount 被硬件上限钳制时显示实际值；fast 档 timeLimit 截断时显示实际生效值。
   const workerText=parallel ? (requestedWorkerCount>workerLimit ? `${workerCount} 个 Worker（请求 ${requestedWorkerCount}，受硬件上限钳制，实际 ${workerCount}）` : `${workerCount} 个 Worker`) : '单 Worker 运行（未勾选并行搜索）';
-  const timeText=(searchMode==='fast' && requestedTimeLimit>3000) ? `${timeLimit} ms（快速档截断上限，请求 ${requestedTimeLimit} ms）` : `${timeLimit} ms`;
-  // fast 档 nodeLimit 同样被截断（见上方钳制），仿 timeText 显示生效值与请求值。
-  const nodeText=(searchMode==='fast' && requestedNodeLimit>350000) ? `${nodeLimit.toLocaleString('zh-CN')}（快速档截断上限，请求 ${requestedNodeLimit.toLocaleString('zh-CN')}）` : nodeLimit.toLocaleString('zh-CN');
+  const timeText=(searchMode==='fast' && requestedTimeLimit>3000) ? `${timeLimit} ms（快速档截断 3s，请求 ${requestedTimeSec} s）` : `${(timeLimit/1000)} s`;
+  // 深度档节点上限由时间预算自动推导（不再手动设置），节点墙不会先于时间墙触发；fast 档沿用 35 万收紧上限。
+  const nodeText=(searchMode==='fast') ? '350,000（快速档收紧上限）' : '由时间预算自动推导（不设固定节点墙）';
+  const stallText = searchMode === 'fast' ? '不适用（快速档固定 3s）' : (stallLimit>0 ? `自动：连续 ${(stallLimit/1000)} s 无提升即提前结束（约最长时间 1/3；最短运行 ${(minRunMs/1000)} s 防误停）` : '不启用（始终跑满时间上限）');
   document.getElementById('statusBox').textContent = `正在后台搜索（${searchMode==='fast'?'快速':'深度'}档，${workerText}）…
 物品总占格：${totalSearchArea}，可用空间：${activeCells}
 ${skipped.length>0?'存在单件无法合法放置的物品，将直接搜索最佳可行子集。':(totalSearchArea<=activeCells?'先寻找全部物品的完整摆法，再按实际总属性与邻接顺序优化。':'物品总面积超过空间，将按实际总属性与邻接顺序搜索最佳可行子集。')}
-节点上限：${nodeText}
-时间上限：${timeText}
+${searchMode==='fast' ? '' : `节点策略：${nodeText}\n`}时间上限：${timeText}
+提前结束策略：${stallText}
 自定义邻接优先物品：${manualItems.length} 件
 求解起点：从已有物品清单自动生成
 ${focusAttr ? `优化目标：${statName(focusAttr)}加成最大化（忽略其它属性加成）\n` : ''}
@@ -458,6 +471,7 @@ ${weightMul ? `属性权重：${formatWeightVector(weightMul)}（搜索目标 to
 页面仍可正常操作；需要中止时点击“停止计算”。`;
 
   let completedWorkers=0, totalNodes=0, globalBest=null, winningMessage=null;
+  let stallEndedWorkers=0; // 由“停滞无提升”提前收尾的 Worker 计数（用于终态原因提示）
   const doneWorkers=new Set(); // 已 done 的 Worker 集合（看门狗只对未完成者补发终态）
   let watchdogTimer=null;
   // incumbent 实时渲染节流：≥200ms 才允许一次 renderStats 全量刷新，防多 Worker 高频晋升 DOM 过载；
@@ -470,6 +484,7 @@ ${weightMul ? `属性权重：${formatWeightVector(weightMul)}（搜索目标 to
     if(doneWorkers.has(worker)) return;
     doneWorkers.add(worker);
     completedWorkers++;
+    if(msg.stallCutoff) stallEndedWorkers++;
     totalNodes+=Number(msg.nodes)||0;
     const comparison=compareSolverBest(msg.best,globalBest);
     if(comparison>0) globalBest=msg.best;
@@ -484,11 +499,12 @@ ${weightMul ? `属性权重：${formatWeightVector(weightMul)}（搜索目标 to
     // 未勾选百分比加成时仅覆盖基础分项与总分（加成恒 0），默认口径 weightMul 为 null 整段不执行。
     if(weightMul) Object.assign(best, withTrueStatsForDisplay(best, useBonus));
     lastResult = {
-      best, nodes:totalNodes, elapsed:Math.round(performance.now()-wallStarted), stopped:meta.stopped, width:W, height:H, active:active.map(r=>r.slice()),
+      best, nodes:totalNodes, elapsed:Math.round(performance.now()-wallStarted), stopped:meta.stopped,
+      stallEnded:stallEndedWorkers>0, width:W, height:H, active:active.map(r=>r.slice()),
       inventory:inventory.map(x=>({...x,cells:cloneCells(x.cells)})),
       settings:{useAdjacencyBonus:useBonus,searchMode,parallelSearch:parallel,workerCount,optimizationOrder:['complete_loading','actual_total_score','manual_priority_neighbors','default_priority_neighbors','no_base_bonus_hits','same_attr_adjacency','damage_bond','total_adjacency_count'],statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>({id:s.id,name:s.name})),manualPriorityRule:'1 is highest; blank uses default rules',assignmentStrategy:'geometry_then_item_assignment',focusAttr},
       skipped:skipped.map(x=>({no:x.no,name:x.name,area:x.area,value:x.value})),manualItems,
-      solverMeta:{fullPackingAttempted:meta.fullPackingAttempted,fullPackingFound:meta.fullPackingFound,fullSearchCutoff:meta.fullSearchCutoff,optimizationCutoff:meta.optimizationCutoff,fallbackCutoff:meta.fallbackCutoff,totalArea:meta.totalArea,totalBase:meta.totalBase,totalItems:meta.totalItems,fullGroupCount:meta.fullGroupCount,detailedGroupCount:meta.detailedGroupCount,assignmentStrategy:meta.assignmentStrategy,singletonDeferredCount:meta.singletonDeferredCount,assignmentChecks:meta.assignmentChecks,workerCount,engine:meta.engine||'sa'}
+      solverMeta:{stallEnded:stallEndedWorkers>0,stallWorkers:stallEndedWorkers,fullPackingAttempted:meta.fullPackingAttempted,fullPackingFound:meta.fullPackingFound,fullSearchCutoff:meta.fullSearchCutoff,optimizationCutoff:meta.optimizationCutoff,fallbackCutoff:meta.fallbackCutoff,totalArea:meta.totalArea,totalBase:meta.totalBase,totalItems:meta.totalItems,fullGroupCount:meta.fullGroupCount,detailedGroupCount:meta.detailedGroupCount,assignmentStrategy:meta.assignmentStrategy,singletonDeferredCount:meta.singletonDeferredCount,assignmentChecks:meta.assignmentChecks,workerCount,engine:meta.engine||'sa'}
     };
     solverWorkers=[]; solverWorker=null; stopSolverStatusHeartbeat(); setSolverRunning(false);
     // 属性权重键仅权重激活时追加（只加法；默认全 1 时不出现，同 focusAttr 条件追加先例）。
@@ -516,6 +532,11 @@ ${weightMul ? `属性权重：${formatWeightVector(weightMul)}（搜索目标 to
     // 两分支互斥不得双写（重组只保留特定 suffix，重组前写入的尾行会被吞掉）。
     if(weightMul && !focusAttr){
       document.getElementById('statusBox').textContent += `\n\n属性权重口径：权重向量 [${formatWeightVector(weightMul)}]；搜索目标 total = Σ base_k × w_k + Σ bonus_k × w_k（w=0 属性不计价；基础全零时按 0.01 保底）；横幅与分项呈实际总属性（Σ真实基础 + Σ真实加成），搜索目标仅用于导向搜索。`;
+    }
+    // 停滞早停原因行：仅当所有 Worker 都在到达时间上限前因“连续 N 秒无提升”提前收尾时（全部触发停滞，
+    // 且非看门狗/用户停止）才提示——任一 Worker 跑满时间上限则说明会话以时间为截止，不再谎报“停滞”。
+    if(stallEndedWorkers > 0 && stallEndedWorkers === workerCount && !meta.stopped){
+      document.getElementById('statusBox').textContent += `\n\n提前结束：连续 ${(stallLimit/1000)} 秒未刷新更高值（${stallEndedWorkers}/${workerCount} Worker 全部触发），已保留当前最好方案。可调大“无提升提前结束”或“最长搜索时间”后重试以追求更优解。`;
     }
   };
   // 会话级硬看门狗（任务 7）：会话上限 = timeLimit + polish 预算（与 engine-worker.js

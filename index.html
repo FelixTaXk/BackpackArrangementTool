@@ -37,11 +37,13 @@
       <div class="row filter-row">
         <label class="filter-label">属性筛选</label>
         <div id="libraryFilterAttribute" class="attr-compass" role="group" aria-label="属性筛选"></div>
-        <button id="resetItemsBtn">重新加载法宝数据库</button>
       </div>
       <div class="row filter-row">
         <label class="filter-label">种类筛选</label>
         <div id="libraryFilterKind" class="attr-compass" role="group" aria-label="种类筛选"></div>
+      </div>
+      <div class="row filter-row library-actions">
+        <button id="resetItemsBtn" class="library-reset">重新加载法宝数据库</button>
       </div>
       <div class="hint">法宝的名称、形状、基础属性与加成全部来自内置数据库（用户 Excel 转换产物），不可手动修改。先选择属性筛选，同种法宝合并为一行；在表格品质列选择品质后点击“添加”，即可将对应品质的法宝加入清单参与求解。</div>
       <div class="hint">横屏时法宝库和已有法宝清单左右并排，并分别在固定高度区域内滚动。</div>
@@ -55,9 +57,12 @@
 
     <div class="card inventory-card">
       <h2>已有法宝清单</h2>
-      <div class="row">
+      <div class="row inventory-actions">
         <button id="renumberBtn">重新编号</button>
         <button id="clearInventoryBtn" class="danger">清空清单</button>
+        <button id="exportInventoryBtn">导出清单</button>
+        <button id="importInventoryBtn">导入清单</button>
+        <input id="importInventoryFile" type="file" accept="application/json,.json" hidden>
       </div>
       <div class="hint">每个条目代表一个实际拥有的法宝；基础属性与加成模式由数据库固定（只读）。可填写“邻接优先级”：1 为最高，数字越小越优先；留空则按默认规则计算。</div>
       <div class="table-scroll inventory-scroll" aria-label="已有法宝清单">
@@ -101,8 +106,8 @@
                 </select>
               </label>
               <label>加成聚焦 <select id="focusAttr"><option value="" selected>默认·总收益最大化</option></select></label>
-              <label>最大搜索节点 <input id="nodeLimit" type="number" min="1000" step="1000" value="2500000"></label>
-              <label>最长搜索时间(ms) <input id="timeLimit" type="number" min="100" step="100" value="20000"></label>
+              <label id="nodeLimitWrap" title="深度档节点上限已由时间预算自动推导，无需手动设置。" hidden>节点上限 <input id="nodeLimit" type="number" min="1000" step="1000000" value="1000000000"></label>
+              <label>最长搜索时间(s) <input id="timeLimit" type="number" min="1" step="1" value="30"></label>
             </div>
             <div class="row">
               <label><input id="useAdjacencyBonus" type="checkbox" checked> 启用百分比相邻加成</label>
@@ -134,7 +139,7 @@
               <button id="saveBtn">保存当前配置</button>
               <button id="loadBtn">读取配置</button>
             </div>
-            <div class="hint">快速档优先在 3 秒内给出可用结果；深度档使用自定义上限继续优化。求解引擎统一为元启发式 SA（模拟退火 + 自适应算子 + 可选回火交换），老 DFS 引擎已退役。并行搜索会用多个不同随机起点同时计算并合并最佳结果，速度更快但会增加 CPU 与耗电，默认关闭。达到时间或节点上限不代表已证明全局最优。属性权重八项默认全 1（官方定价）与现状一致；权重只作用于基础属性计价，加成按原价，0 按 0.01 保底。</div>
+            <div class="hint">快速档优先在 3 秒内给出可用结果；深度档以「最长搜索时间」为硬上限继续优化，并自动启用早停：最近一次刷新更高值后若连续一段时间无提升则提前收尾（内部按最长时间约 1/3 估算窗口，且至少 3 秒；另有内部最短运行约 20% 时间兜底防开局误停）。求解引擎统一为元启发式 SA（模拟退火 + 自适应算子 + 可选回火交换）。达到时间上限不代表已证明全局最优；提前结束意味着已进入长时间无明显提升的平台期。并行搜索用多个不同随机起点同时计算并合并最佳结果，速度更快但增加 CPU 与耗电，默认关闭。属性权重八项默认全 1（官方定价）与现状一致；权重只作用于基础属性计价，加成按原价，0 按 0.01 保底。</div>
           </div>
         </div>
         <div class="result-summary">

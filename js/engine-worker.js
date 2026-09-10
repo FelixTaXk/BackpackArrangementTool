@@ -28,6 +28,7 @@ var bestNoBase = 0, bestSame = 0; // best 侧的 rate-only 命中次数 / 同属
 var rngS0 = 0, rngS1 = 0;
 var curT = 1, T0 = 1, Tmin = 0, expTable = null;
 var iters = 0, started = 0, deadline = 0, stoppedFlag = false;
+var ewStallLimit = 0, ewMinRun = 0, lastImproveWall = 0, ewStallCutoff = false; // 早停：停滞窗(ms)/最短运行(ms)/最近改进墙上时钟/本次是否由停滞触发收尾
 var reheatCount = 0, lastImproveIter = 0, acceptCount = 0, totalMoves = 0;
 var ewNodeLimit = 0, ewLastReheatIter = 0; // 主循环分片（P4）：跨片续跑的边界状态
 var ewMidRestart = 0; // 中期强制逃逸：重热 8 次仍停滞时从 best 扰动重启（纯状态触发，复现性不变）
@@ -317,6 +318,7 @@ function ewBetterThanBest(){
 function ewMaybePromote(now){
   if(!ewBetterThanBest()) return;
   ewCopyToBest();
+  lastImproveWall = now; // 早停判定基准：best 改进的墙上时钟
   lastImproveIter = iters;
   // incumbent-lite 节流 250ms：主线程收到后经 encRebuildBest 全算重建契约 best
   if(now - lastIncumbent >= 250){
@@ -1065,7 +1067,7 @@ function ewSendDone(now){
   self.postMessage({
     type: 'done', sol: bestSol, parts: ewPartsOfBest(),
     nodes: iters, elapsed: Math.round(now - started), stopped: stoppedFlag,
-    fullPackingAttempted: true, fullPackingFound: bestComplete,
+    stallCutoff: ewStallCutoff, fullPackingAttempted: true, fullPackingFound: bestComplete,
     fullSearchCutoff: false, optimizationCutoff: false, fallbackCutoff: false,
     totalArea: ewMeta.requiredTotalArea, totalBase: ewMeta.requiredTotalBase,
     totalItems: ewMeta.requiredTotalItems, assignmentStrategy: 'sa_alns',
@@ -1374,7 +1376,13 @@ function ewRunChunk(){
     // 时间片让出：先消化队列内 seed/swap-accept/stop，再续跑下一片（RNG 序列与迭代次序不受分片影响）
     if(now - sliceStart >= 25){
       ewDrainMessages();
-      if(!stoppedFlag && iters < ewNodeLimit && now < deadline) setTimeout(ewRunChunk, 0);
+      if(stoppedFlag){ ewFinishSearch(); return; }
+      // 停滞早停（分片边界判定，粒度≈25ms）：已越过最短运行窗且自上次 best 改进起
+      // 连续停滞 stallLimit 毫秒仍无新纪录 → 提前收尾（保留当前 best，走 polish + 终态）。
+      if(!stoppedFlag && ewStallLimit > 0
+        && now - started >= ewMinRun
+        && now - lastImproveWall >= ewStallLimit){ ewStallCutoff = true; ewFinishSearch(); return; }
+      if(iters < ewNodeLimit && now < deadline) setTimeout(ewRunChunk, 0);
       else ewFinishSearch();
       return;
     }
@@ -1513,6 +1521,10 @@ function engineWorkerMain(){
       started = performance.now();
       deadline = started + Math.max(100, Number(ewMeta.timeLimit) || 20000);
       ewNodeLimit = Math.max(1000, Number(ewMeta.nodeLimit) || 2500000);
+      // 早停参数（solver 依 timeLimit 推导）：ewStallLimit>0 时，best 在 [minRun 之后] 连续停滞
+      // stallLimit 毫秒即提前收尾；0 表示不启用（始终跑满时间/节点上限，兼容旧行为）。
+      ewStallLimit = Math.max(0, Number(ewMeta.stallLimit) || 0);
+      ewMinRun = Math.max(0, Number(ewMeta.minRunMs) || 0);
       lastProgress = started; lastIncumbent = started - 250; lastSwapReq = started - 50;
       ewInitialSolution();
       const tempIndex = Math.max(0, Number(ewMeta.tempIndex) || 0);
@@ -1539,9 +1551,12 @@ function engineWorkerMain(){
       ewLastReheatIter = 0;
       iters = 0; acceptCount = 0; totalMoves = 0; reheatCount = 0; lastImproveIter = 0;
       ewMidRestart = 0;
-      stoppedFlag = false;
+      stoppedFlag = false; ewStallCutoff = false;
       // 初始贪心解先精化一轮（确定性），再上报基线 incumbent-lite
       ewRefineSolution();
+      // 早停基线：把初始 best 的取得时刻视为一次“改进”（此时间点起算停滞窗），
+      // 避免初始解刚就位、SA 尚未拉开首条改进时就被误判停滞而过早收尾。
+      lastImproveWall = started;
       // 初始贪心解立即上报一次 incumbent-lite，主线程可尽早全算重建展示基线
       self.postMessage({type:'incumbent-lite', stage:'SA 退火', sol: new Int32Array(bestSol), parts: ewPartsOfBest()});
       // 主循环分片调度（P4）：让出事件循环，片间消化 seed/swap-accept/stop
@@ -1580,6 +1595,7 @@ function engWorkerStateDecls(){
     + 'var rngS0=0,rngS1=0;'
     + 'var curT=1,T0=1,Tmin=0,expTable=null;'
     + 'var iters=0,started=0,deadline=0,stoppedFlag=false;'
+    + 'var ewStallLimit=0,ewMinRun=0,lastImproveWall=0,ewStallCutoff=false;\n'
     + 'var reheatCount=0,lastImproveIter=0,acceptCount=0,totalMoves=0;'
     + 'var segScores=null,segCounts=null,opWeights=null,opPrefix=null;'
     + 'var lastProgress=0,lastIncumbent=0,lastSwapReq=0;'

@@ -93,7 +93,9 @@ function engOrchCreateWorkers(opts){
       type: 'init', buffer: buf, offsets: bundle.offsets,
       meta: {
         seedOffset: Math.imul(workers.length + 1, 0x85ebca6b), // 随最终下标唯一的随机种子
-        nodeLimit: payload.nodeLimit, timeLimit: payload.timeLimit, useBonus: payload.useBonus,
+        nodeLimit: payload.nodeLimit, timeLimit: payload.timeLimit,
+        stallLimit: payload.stallLimit || 0, minRunMs: payload.minRunMs || 0,
+        useBonus: payload.useBonus,
         requiredTotalItems, requiredTotalArea: payload.requiredTotalArea,
         requiredTotalBase: payload.requiredTotalBase, skippedCount,
         tempIndex: n, swapEnabled: temperingOn,
@@ -296,6 +298,7 @@ function engOrchConvertDone(worker, msg){
     nodes: msg.nodes ?? (rec ? rec.nodes : 0),
     elapsed: msg.elapsed ?? (rec ? rec.elapsed : 0),
     stopped: !!msg.stopped,
+    stallCutoff: !!msg.stallCutoff,
     fullPackingAttempted: msg.fullPackingAttempted !== undefined ? msg.fullPackingAttempted : true,
     fullPackingFound: msg.fullPackingFound !== undefined ? msg.fullPackingFound : !!(best && best.complete),
     fullSearchCutoff: !!msg.fullSearchCutoff,

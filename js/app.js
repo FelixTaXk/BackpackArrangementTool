@@ -75,6 +75,18 @@ function bindEvents(){
       renderResultGrid(null);
     }
   });
+  // 清单导入导出：导入走隐藏 file input（accept 限定 .json），导出直接触发下载。
+  // 导入流程与 saveConfig 读档同源：按 id 反查当前数据库重建条目，缺键的 id 跳过并提示。
+  document.getElementById('exportInventoryBtn').addEventListener('click', exportInventory);
+  const importFileInput = document.getElementById('importInventoryFile');
+  document.getElementById('importInventoryBtn').addEventListener('click', ()=> importFileInput && importFileInput.click());
+  if(importFileInput){
+    importFileInput.addEventListener('change', e=>{
+      const file = e.target.files && e.target.files[0];
+      if(file) importInventoryFromFile(file);
+      e.target.value = ''; // 重置 input：同文件可重复导入
+    });
+  }
   document.getElementById('solveBtn').addEventListener('click', solveAndRender);
   document.getElementById('cancelSolveBtn').addEventListener('click', cancelSolve);
   document.getElementById('parallelSearch').addEventListener('change', e=>{
@@ -82,7 +94,6 @@ function bindEvents(){
   });
   document.getElementById('searchMode').addEventListener('change', e=>{
     const deep=e.target.value==='deep';
-    document.getElementById('nodeLimit').disabled=!deep;
     document.getElementById('timeLimit').disabled=!deep;
   });
   document.getElementById('focusAttr').addEventListener('change', ()=>{
