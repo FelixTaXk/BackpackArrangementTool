@@ -41,6 +41,7 @@ function engOrchCreateWorkers(opts){
   // 主线程一次性构建 SoA 模型 + bundle（encBuildModel 内部允许 BigInt，仅构建期）
   const model = encBuildModel(payload.items, payload.activeMask, payload.W, payload.H, {
     statKeys: payload.statKeys, statCount: payload.statCount,
+    rateOnlyFromK: payload.rateOnlyFromK,
     manualCount: payload.manualCount, defaultTierCount: payload.defaultTierCount,
     useBonus: payload.useBonus
   });
@@ -50,6 +51,7 @@ function engOrchCreateWorkers(opts){
   const skippedCount = Math.max(0, Number(payload.skippedCount) || 0);
   const ctx = {
     statCount: payload.statCount, useBonus: payload.useBonus,
+    rateOnlyFromK: payload.rateOnlyFromK,
     manualCount: payload.manualCount, defaultTierCount: payload.defaultTierCount,
     totalItems: Math.max(0, requiredTotalItems - skippedCount),
     statKeys: payload.statKeys,
@@ -174,7 +176,7 @@ function engOrchBeta(k){
 // 用主线程 SoA 模型的 CSR 邻接对表现场重算（每件物品至多一个摆放在放，摆放对↔物品对双射）。
 function engOrchEnergyOf(sol){
   const m = engOrchState.model, ctx = engOrchState.ctx;
-  let base = 0, area = 0, items = 0, bonus = 0, manW = 0, defW = 0, dmg = 0, adj = 0;
+  let base = 0, area = 0, items = 0, bonus = 0, manW = 0, defW = 0, dmg = 0, adj = 0, noBase = 0, same = 0;
   const placedPl = [];
   for(let i = 0; i < m.I; i++){
     const p = sol[i];
@@ -195,18 +197,25 @@ function engOrchEnergyOf(sol){
       if(m.useBonus) bonus += m.adjBonus[e];
       manW += m.adjManW[e];
       defW += m.adjDefW[e];
-      dmg += m.adjDmg ? m.adjDmg[e] : 0; // 伤害贴邻 bond 计数（对称 CSR，无序对一次）
+      dmg += m.adjDmg ? m.adjDmg[e] : 0;         // 伤害贴邻 bond 计数（对称 CSR，无序对一次）
+      noBase += m.adjNoBase ? m.adjNoBase[e] : 0; // rate-only 维命中次数（对称 CSR，无序对一次）
+      same += m.adjSame ? m.adjSame[e] : 0;       // 同属性相邻对数（抱团键）
     }
   }
   const complete = items + ctx.skippedCount === ctx.requiredTotalItems;
-  return engOrchScalar(complete, base, ctx.useBonus ? bonus : 0, manW, defW, dmg, adj, items, area);
+  return engOrchScalar(complete, base, ctx.useBonus ? bonus : 0, manW, defW, dmg, adj, items, area, noBase, same);
 }
 
-// 与 Worker 侧 ewScalarOf 逐字一致的能量标量（dmg = 伤害贴邻 bond 数，取 1e2 弱于任一默认档位边 1e5，
-// 使 bond 仅在各档位加权相等后破平——近似 Worker 侧 ewBetterLex 的 dmg 项，见 worker 注释）
-function engOrchScalar(c, base, bonus, manW, defW, dmg, adj, items, area){
+// 能量标量（2026-09-10 起**与 Worker 侧 ewScalarOf 完全同式**，修复 E1 半一致性债）。
+// Worker ewScalarOf = -((c?1e12:0) + total + items + 1e-3·adj + 1e-4·area + 1e-5·noBase + 1e-5·same)
+// 注意：manW/defW/dmg **不入能量**（与 Worker 一致）——它们的单步变化量过大，入能量会把搜索
+// 降级为优先级/档位驱动，与字典序（total 优先）方向相反；它们仅用于字典序晋级与上报。
+// 本函数仅用于回火交换时的跨 worker 能量比较（engOrchEnergyOf / engOrchEnergyFromBest），
+// best 晋级由各 Worker 内部 ewBetterThanBest（字典序）完成。
+function engOrchScalar(c, base, bonus, manW, defW, dmg, adj, items, area, noBase, same){
   const total = base + bonus;
-  return -((c ? 1e12 : 0) + total + 1e8 * manW + 1e5 * defW + 1e2 * dmg + 10 * adj + items + 1e-3 * area);
+  const nb = noBase || 0, sm = same || 0;
+  return -((c ? 1e12 : 0) + total + items + 1e-3 * adj + 1e-4 * area + 1e-5 * nb + 1e-5 * sm);
 }
 
 // ----------------------------------------------------------------------------
@@ -246,9 +255,11 @@ function engOrchEnergyFromBest(best){
   for(let i = 0; i < mv.length; i++) manW += (mv[i] || 0) * Math.max(1, mv.length - i) * 1e8;
   const dv = best.defaultPriorityVector || [];
   for(let i = 0; i < dv.length; i++) defW += (dv[i] || 0) * Math.max(1, dv.length - i) * 1e5;
-  const dmg = Number(best.damageBondCount) || 0; // 伤害贴邻 bond（encRebuildBest 经 scoreEvaluateConcrete 已计）
+  const dmg = Number(best.damageBondCount) || 0;   // 伤害贴邻 bond（encRebuildBest 经 scoreEvaluateConcrete 已计）
+  const noBase = Number(best.noBaseHitCount) || 0; // rate-only 维命中次数（同上）
+  const same = Number(best.sameAdjCount) || 0;     // 同属性相邻对数（同上）
   return engOrchScalar(!!best.complete, best.baseScore, ctx.useBonus ? best.bonusScore : 0,
-    manW, defW, dmg, best.adjacencyCount || 0, best.itemCount || 0, best.area || 0);
+    manW, defW, dmg, best.adjacencyCount || 0, best.itemCount || 0, best.area || 0, noBase, same);
 }
 
 // placements 项字段序列化（剔除内部 lo/hi 视图键，补 geometryGroupIndex）

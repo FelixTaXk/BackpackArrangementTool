@@ -1,6 +1,11 @@
 // solver.js —— 求解编排：物品准备/Worker 生命周期/心跳状态/取消/比较/求解入口。加载顺序 14/19，依赖 state、utils、talisman-model。
 'use strict';
 
+// 加成维口径常量：bonusStats 中前 3 维（atk/def/hp）有基础值，其后为 rate-only 维
+// （dmg/crit/heal/shield/drain，无基础值、不进 totalScore、仅驱动排序）。
+// 该值同时决定 rate-only 命中统计的起始下标，须与 score-shared / engine-encoding 默认 3 保持一致。
+const ENGINE_RATE_ONLY_FROM_K = 3;
+
 function getParallelWorkerLimit(){
   const cores = Math.floor(Number(navigator.hardwareConcurrency) || 4);
   // 保留一个逻辑核心给页面交互；低核心设备至少仍可选择 4 个 Worker。
@@ -419,6 +424,9 @@ function solveAndRender(){
     activeMask:maskToDec(activeLo, activeHi), activeCells, W, H, nodeLimit, timeLimit, useBonus,
     statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id),
     statCount:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).length,
+    // rate-only 维起始下标：bonusStats 前 3 维（atk/def/hp）有基础值，其后 dmg/crit/heal/shield/drain
+    // 为 rate-only 维（无基础值，不进 totalScore，仅驱动排序）。与 score-shared 默认 3 一致。
+    rateOnlyFromK:ENGINE_RATE_ONLY_FROM_K,
     manualCount:manualPriorityLevels.length,
     defaultTierCount:DEFAULT_TIER_COUNT,
     requiredTotalItems:inventory.length,
@@ -478,7 +486,7 @@ ${weightMul ? `属性权重：${formatWeightVector(weightMul)}（搜索目标 to
     lastResult = {
       best, nodes:totalNodes, elapsed:Math.round(performance.now()-wallStarted), stopped:meta.stopped, width:W, height:H, active:active.map(r=>r.slice()),
       inventory:inventory.map(x=>({...x,cells:cloneCells(x.cells)})),
-      settings:{useAdjacencyBonus:useBonus,searchMode,parallelSearch:parallel,workerCount,optimizationOrder:['complete_loading','actual_total_score','manual_priority_neighbors','default_priority_neighbors','total_adjacency_count'],statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>({id:s.id,name:s.name})),manualPriorityRule:'1 is highest; blank uses default rules',assignmentStrategy:'geometry_then_item_assignment',focusAttr},
+      settings:{useAdjacencyBonus:useBonus,searchMode,parallelSearch:parallel,workerCount,optimizationOrder:['complete_loading','actual_total_score','manual_priority_neighbors','default_priority_neighbors','no_base_bonus_hits','same_attr_adjacency','damage_bond','total_adjacency_count'],statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>({id:s.id,name:s.name})),manualPriorityRule:'1 is highest; blank uses default rules',assignmentStrategy:'geometry_then_item_assignment',focusAttr},
       skipped:skipped.map(x=>({no:x.no,name:x.name,area:x.area,value:x.value})),manualItems,
       solverMeta:{fullPackingAttempted:meta.fullPackingAttempted,fullPackingFound:meta.fullPackingFound,fullSearchCutoff:meta.fullSearchCutoff,optimizationCutoff:meta.optimizationCutoff,fallbackCutoff:meta.fallbackCutoff,totalArea:meta.totalArea,totalBase:meta.totalBase,totalItems:meta.totalItems,fullGroupCount:meta.fullGroupCount,detailedGroupCount:meta.detailedGroupCount,assignmentStrategy:meta.assignmentStrategy,singletonDeferredCount:meta.singletonDeferredCount,assignmentChecks:meta.assignmentChecks,workerCount,engine:meta.engine||'sa'}
     };
@@ -525,6 +533,7 @@ ${weightMul ? `属性权重：${formatWeightVector(weightMul)}（搜索目标 to
       complete:false, baseScore:-1, bonusScore:0, totalScore:-1, area:0, itemCount:0, adjacencyCount:0,
       manualPriorityVector:new Array(manualPriorityLevels.length).fill(0), defaultPriorityVector:new Array(DEFAULT_TIER_COUNT).fill(0),
       placements:[], occupied:'0', bonusEvents:[], priorityLinks:[],
+      sameAdjCount:0, noBaseHitCount:0,
       statKeys:(window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).map(s=>s.id)
     };
     for(const w of solverWorkers.slice()){

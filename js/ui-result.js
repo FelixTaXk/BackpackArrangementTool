@@ -102,6 +102,7 @@ function renderStats(best, nodes, elapsed, stopped, activeCells, skipped, solver
   const eventList = best.bonusEvents.length ? best.bonusEvents.map(eventLine).join('\n') : '无有效百分比加成。';
   const prioritySummary = buildPrioritySummary(best);
   const damageBondSummary = buildDamageBondSummary(best);
+  const clusteringSummary = buildClusteringSummary(best);
   const skippedText = skipped && skipped.length ? `\n\n未参与搜索（单件在当前空间/方向规则下没有任何合法位置）：\n${skipped.map(x=>`#${x.no} ${x.name}`).join('\n')}` : '';
   const placedNos = new Set(best.placements.map(p=>String(p.no)));
   const omitted = inventory.filter(x=>!placedNos.has(String(x.no)) && !(skipped||[]).some(y=>String(y.no)===String(x.no)));
@@ -129,7 +130,7 @@ function renderStats(best, nodes, elapsed, stopped, activeCells, skipped, solver
     else if(as||bs) singleMultiAdj++;
     else multiMultiAdj++;
   }
-  document.getElementById('statusBox').textContent = `${conclusion}\n耗时：${elapsed} ms\n求解起点：从已有物品清单自动生成\n自动布局策略：多格物品先布局，${solverMeta.singletonDeferredCount ?? 0} 件单格物品延后分配（属性分配检查 ${Number(solverMeta.assignmentChecks||0).toLocaleString('zh-CN')} 次）\n完整装入：${best.complete?'是':'否'}\n物品总占格：${solverMeta.totalArea ?? '-'}，可用空间：${activeCells}\n放入物品：${best.itemCount}/${solverMeta.totalItems ?? inventory.length}\n空余可用格：${unused}\n比较顺序：完整装入 ＞ 实际总属性（基础属性 + 百分比加成）＞ 手动指定物品邻接（1最高，同优先级合并比较）＞ 默认重点物品邻接 ＞ 加成贴同属性伤害法宝数（最后破平） ＞ 总邻接数量\n实际总属性：${formatNum(best.totalScore)} = 基础属性 ${formatNum(best.baseScore)} + 百分比加成 ${formatNum(best.bonusScore)}\n总邻接数量：${best.adjacencyCount ?? 0} 对不同物品\n加成法宝贴同属性伤害法宝：${best.damageBondCount ?? 0} 处\n邻接结构：单格-单格 ${singleSingleAdj} 对｜单格-多格 ${singleMultiAdj} 对｜多格-多格 ${multiMultiAdj} 对\n\n${damageBondSummary}\n\n重点物品邻接：\n${prioritySummary}\n\n摆放清单：\n${list}\n\n百分比加成清单：\n${eventList}${omittedText}${skippedText}`;
+  document.getElementById('statusBox').textContent = `${conclusion}\n耗时：${elapsed} ms\n求解起点：从已有物品清单自动生成\n自动布局策略：多格物品先布局，${solverMeta.singletonDeferredCount ?? 0} 件单格物品延后分配（属性分配检查 ${Number(solverMeta.assignmentChecks||0).toLocaleString('zh-CN')} 次）\n完整装入：${best.complete?'是':'否'}\n物品总占格：${solverMeta.totalArea ?? '-'}，可用空间：${activeCells}\n放入物品：${best.itemCount}/${solverMeta.totalItems ?? inventory.length}\n空余可用格：${unused}\n比较顺序：完整装入 ＞ 实际总属性（基础属性 + 百分比加成）＞ 手动指定物品邻接（1最高，同优先级合并比较）＞ 默认重点物品邻接 ＞ 加成命中数（同属性贴对一件记一次）＞ 同属性抱团数 ＞ 加成贴同属性伤害法宝数 ＞ 总邻接数量\n实际总属性：${formatNum(best.totalScore)} = 基础属性 ${formatNum(best.baseScore)} + 百分比加成 ${formatNum(best.bonusScore)}\n同属性抱团：${best.sameAdjCount ?? 0} 对相邻同属性法宝\n加成命中数：${best.noBaseHitCount ?? 0} 处（伤害/暴击/治疗/护盾/汲取 同属性贴对一件记一次）\n总邻接数量：${best.adjacencyCount ?? 0} 对不同物品\n加成法宝贴同属性伤害法宝：${best.damageBondCount ?? 0} 处\n邻接结构：单格-单格 ${singleSingleAdj} 对｜单格-多格 ${singleMultiAdj} 对｜多格-多格 ${multiMultiAdj} 对\n${clusteringSummary ? clusteringSummary + '\\n' : ''}\n${damageBondSummary}\n\n重点物品邻接：\n${prioritySummary}\n\n摆放清单：\n${list}\n\n百分比加成清单：\n${eventList}${omittedText}${skippedText}`;
 }
 function buildPrioritySummary(best){
   const countByItem = new Map();
@@ -177,6 +178,33 @@ function buildDamageBondSummary(best){
   }
   if(!rows.length) return '加成法宝贴同属性伤害法宝：本方案无加成法宝直接贴着造成伤害的同属性法宝。';
   return rows.join('\n');
+}
+
+// 同属性抱团概览：按属性分组，给出「组内相邻对数 / 交界（异属性相邻）对数」。
+// 帮助用户确认双属性清单是否已按「同属性抱团、异属性蹲交界」的取向排布。
+function buildClusteringSummary(best){
+  if(!best || !Array.isArray(best.placements) || best.placements.length < 2) return '';
+  const placed = best.placements;
+  const byAttr = new Map();
+  for(const p of placed){
+    const k = p.attribute || '（无属性）';
+    if(!byAttr.has(k)) byAttr.set(k, []);
+    byAttr.get(k).push(p);
+  }
+  let sameTotal = 0, crossTotal = 0;
+  // 只统计同属性组内的相邻对：逐组内两两判相邻
+  for(const [attr, list] of byAttr){
+    let n = 0;
+    for(let i = 0; i < list.length; i++) for(let j = i + 1; j < list.length; j++){
+      if(areAdjacent(list[i].cells, list[j].cells)) n++;
+    }
+    byAttr.set(attr, n);
+    sameTotal += n;
+  }
+  // 异属性相邻对 = 总相邻 - 同属性相邻
+  crossTotal = Math.max(0, (Number(best.adjacencyCount) || 0) - sameTotal);
+  const parts = [...byAttr.entries()].map(([attr, n]) => `${attr} ${n} 对`);
+  return `同属性抱团概览：${parts.join('｜')}（共 ${sameTotal} 对同属性相邻，${crossTotal} 对处于属性交界）`;
 }
 
 function eventLine(e){
