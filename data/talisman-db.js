@@ -1,6 +1,6 @@
 // data/talisman-db.js —— 法宝内置数据库（由 scripts/convert-excel.mjs 从 法宝属性.xlsx 转换生成）。
 // 必须在 js/config.js 之前加载；config.js 的 validateTalismanDB() 会在启动时逐条校验。
-// 数据说明：talismans 共 363 条，按属性分组（金木水火土雷体）；
+// 数据说明：talismans 共 365 条，按属性分组（金木水火土雷体）；
 // 参与计算的属性项目为 8 维（见 bonusStats 注册表）：atk/def/hp 有基础值（加成 = 目标基础值 × 加成率/100），
 // dmg/crit/heal/shield/drain 为 rate-only 战斗加成（无基础值，计分走「命中次数」通道，不并入实际总属性）；
 // 加成率为百分比数值（如 40 表示 40%）；
@@ -560,6 +560,8 @@ window.TALISMAN_DB = {
      baseStats:{atk:96, def:16, hp:2940}, bonusMode:'self', bonusRates:{dmg:10}, causesDamage:true, extraStats:{'共鸣值':40, '种类':"枪"}},
     {id:'lei-red-004', name:'惊雷兽吼', attribute:'雷', quality:'红', cells:[[0,1],[1,1],[2,0],[2,1]],
      baseStats:{atk:100, def:16, hp:4800}, bonusMode:'none', bonusRates:{}, causesDamage:true, extraStats:{'共鸣值':56, '种类':"枪"}},
+    {id:'lei-red-009', name:'免罪阳雷', attribute:'雷', quality:'红', cells:[[0,1],[1,1],[2,0],[2,1]],
+     baseStats:{atk:105, def:15, hp:4600}, bonusMode:'none', bonusRates:{}, causesDamage:true, extraStats:{'共鸣值':56, '种类':"枪"}},
     {id:'lei-green-009', name:'雷元乌龙旗', attribute:'雷', quality:'绿', cells:[[0,0],[0,1],[1,0],[2,0]],
      baseStats:{atk:20, def:3, hp:500}, bonusMode:'self', bonusRates:{hp:50}, causesDamage:true, extraStats:{'共鸣值':5, '种类':"幡"}},
     {id:'lei-blue-009', name:'雷元乌龙旗', attribute:'雷', quality:'蓝', cells:[[0,0],[0,1],[1,0],[2,0]],
@@ -576,6 +578,8 @@ window.TALISMAN_DB = {
      baseStats:{atk:120, def:20, hp:6250}, bonusMode:'self', bonusRates:{dmg:10}, causesDamage:true, extraStats:{'共鸣值':64, '种类':"乐"}},
     {id:'lei-red-008', name:'五雷号令', attribute:'雷', quality:'红', cells:[[0,0],[0,1],[1,0],[1,1],[2,0]],
      baseStats:{atk:108, def:18, hp:6950}, bonusMode:'self', bonusRates:{hp:100}, causesDamage:true, extraStats:{'共鸣值':64, '种类':"幡"}},
+    {id:'lei-red-010', name:'纠罚神雷', attribute:'雷', quality:'红', cells:[[0,0],[0,1],[1,0],[1,1],[2,0]],
+     baseStats:{atk:143, def:20, hp:5100}, bonusMode:'self', bonusRates:{atk:50}, causesDamage:true, extraStats:{'共鸣值':64, '种类':"枪"}},
     // ===== 邪 =====
     {id:'xie-green-001', name:'邪源珠', attribute:'邪', quality:'绿', cells:[[0,0]],
      baseStats:{atk:6, def:0, hp:113}, bonusMode:'provider', bonusRates:{dmg:2}, causesDamage:true, extraStats:{'共鸣值':2, '种类':"珠"}},
