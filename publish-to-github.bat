@@ -16,8 +16,23 @@ if errorlevel 1 (
 )
 
 :: 2) Show what will be published
-echo [1/3] Changes to be published:
+echo [1/4] Changes to be published:
 git status -s
+echo.
+
+:: 2.5) Stamp local asset URLs with their content hash.
+::      GitHub Pages serves everything with Cache-Control: max-age=600, so a plain
+::      reload can keep running the OLD js for ~10 min even after a successful deploy.
+::      A changed file gets a new URL (?v=<hash>) -> browser/proxy must re-download it.
+echo [2/4] Stamping asset versions in index.html (?v=content-hash)...
+where node >nul 2>nul
+if errorlevel 1 (
+  echo        [WARN] Node.js not found in PATH - stamp skipped.
+  echo               Site still deploys, but browsers may keep stale js for ~10 min.
+) else (
+  node "%~dp0scripts\stamp-assets.mjs"
+  if errorlevel 1 echo        [WARN] stamp step reported a problem - keeping existing stamps.
+)
 echo.
 
 :: 3) Stage everything (.gitignore already excludes .workbuddy/)
@@ -26,7 +41,7 @@ git add -A
 :: 4) Commit only if there is something staged
 git diff --cached --quiet
 if errorlevel 1 (
-  echo [2/3] Staged changes found, committing...
+  echo [3/4] Staged changes found, committing...
   git commit -q -m "deploy: auto-publish via publish-to-github.bat"
   if errorlevel 1 (
     echo [ERROR] Commit failed. Check git user.name / user.email config.
@@ -34,11 +49,11 @@ if errorlevel 1 (
   )
   echo        Committed.
 ) else (
-  echo [2/3] No new changes, skip commit.
+  echo [3/4] No new changes, skip commit.
 )
 
 :: 5) Push -> GitHub Pages auto-redeploys from the master branch
-echo [3/3] Pushing to origin/master (triggers GitHub Pages rebuild)...
+echo [4/4] Pushing to origin/master (triggers GitHub Pages rebuild)...
 git push origin master
 if errorlevel 1 (
   echo [ERROR] Push failed. Check: (1) internet connection; (2) GitHub credentials; (3) write access to the repo.
