@@ -1057,6 +1057,9 @@ function ewSendProgress(now){
     type: 'progress', stage: 'SA 退火', nodes: iters, elapsed: Math.round(now - started),
     bestComplete, bestArea, bestBase, bestBonus, bestTotal: bestBase + bestBonus,
     bestAdjacency: bestAdj, bestItems,
+    // 心跳侧「当前同元素贴邻对数」数据源（solver 读 msg.bestSameAttrAdj）：
+    // 与 done 的 sameAttrAdj 同取 bestSame；关闭聚类时恒为 0，与比较口径一致。
+    bestSameAttrAdj: ewMeta && ewMeta.clusterByElement ? bestSame : 0,
     totalArea: ewMeta.requiredTotalArea, totalItems: ewMeta.requiredTotalItems,
     restarts: reheatCount, saTemp: curT,
     saAcceptRate: totalMoves > 0 ? acceptCount / totalMoves : 0,
@@ -1073,7 +1076,7 @@ function ewSendDone(now){
     totalArea: ewMeta.requiredTotalArea, totalBase: ewMeta.requiredTotalBase,
     totalItems: ewMeta.requiredTotalItems, assignmentStrategy: 'sa_alns',
     singletonDeferredCount: 0, assignmentChecks: iters, engine: 'sa',
-    sameAttrAdj: ewMeta && ewMeta.clusterByElement ? bestSameAttr : 0
+    sameAttrAdj: ewMeta && ewMeta.clusterByElement ? bestSame : 0
   });
 }
 

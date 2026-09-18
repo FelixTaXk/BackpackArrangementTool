@@ -122,12 +122,15 @@ function rebuildKindFilter(){
   setLibraryFilterKind('全部');
 }
 
-// 基础属性固定三行展示：按注册表顺序（攻击力/防御/生命值）每项一行，缺失或 0 的项目显示 0，纯文本无装饰（同一单元格内多个 <div> 纵向排列，内部已转义）。
+// 基础属性列固定逐行展示「有基础值」的属性维（注册表顺序：攻击力/防御/生命值），缺失或 0 的项目显示 0，
+// 纯文本无装饰（同一单元格内多个 <div> 纵向排列，内部已转义）。口径见 talisman-model.baseValueStatKeys()：
+// rate-only 维（伤害/暴击伤害/治疗效果/护盾值/汲取）基础值恒为 0，按用户确认口径不展示，
+// 其加成率信息在「加成」列（bonusLinesHtml）呈现。
 function baseStatsLinesHtml(it){
-  const stats = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []);
-  const lines = stats.map(s=>{
-    const v = it.baseStats ? Number(it.baseStats[s.id]) : 0;
-    return `<div>${escapeHtml(s.name)} ${escapeHtml(formatNum(Number.isFinite(v) && v > 0 ? v : 0))}</div>`;
+  const keys = baseValueStatKeys();
+  const lines = keys.map(k=>{
+    const v = it.baseStats ? Number(it.baseStats[k]) : 0;
+    return `<div>${escapeHtml(statName(k))} ${escapeHtml(formatNum(Number.isFinite(v) && v > 0 ? v : 0))}</div>`;
   });
   return lines.length ? lines.join('') : escapeHtml('-');
 }

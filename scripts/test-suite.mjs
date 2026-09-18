@@ -5,8 +5,15 @@
 // 分节：
 //   O1  位板掩码 BigInt → 双 Uint32（行为中性）
 //   SS  score-shared 内置自测
+//   BS  Blob 上报消息（done/progress）+ 法宝库/清单「基础属性」列展示口径
 
+import fs from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
 import { loadLogicLayer, makeAsserter } from './test-harness.mjs';
+
+const SUITE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const results = [];
 function section(name, fn){
@@ -152,6 +159,62 @@ section('SS score-shared 内置自测', a => {
   const { sandbox } = loadLogicLayer();
   const r = sandbox.__SCORE_SELFTEST__();
   a.ok(r.pass, `__SCORE_SELFTEST__ 全绿（失败项：${r.failures.join(' | ') || '无'}）`);
+});
+
+// ---------------------------------------------------------------------------
+// BS：Blob 上报消息（done / progress）+ 法宝库/清单「基础属性」列展示口径
+// ---------------------------------------------------------------------------
+// 回归护栏（2026-09-19）：
+//   1. 8 维注册表改造时模块级变量由 bestSameAttr 改名为 bestSame，done 消息处漏改一处旧名，
+//      而该右操作数仅在 clusterByElement 打开时求值 → 关闭时看不出、开启时求解必然收不到 done
+//      （浏览器表现：计算失败 Uncaught ReferenceError: bestSameAttr is not defined）。
+//      本分节直接拼真实 Blob 源码在独立 vm 内构造消息，专测该作用域（顶层 var 名与 Worker 内一致）。
+//   2. 同一改造把 bonusStats 扩为 8 维，法宝库/清单「基础属性」列若按注册表全维渲染，
+//      会多出 5 行恒为 0 的 rate-only 噪声（用户确认口径：不展示，仅驱动排序）。
+section('BS Blob 上报消息 + 基础属性列口径', a => {
+  const { sandbox } = loadLogicLayer();
+  // engine-worker.js 不在 LOGIC_SCRIPTS 内（职责为 Blob 源码拼接），手动注入。
+  vm.runInContext(fs.readFileSync(path.join(SUITE_ROOT, 'js/engine-worker.js'), 'utf8'), sandbox, { filename: 'js/engine-worker.js' });
+  // 与 createEngineWorker 同式拼装：状态声明 + 函数体，确保测的是 Worker 内真实作用域。
+  const blobSrc = sandbox.engWorkerStateDecls()
+    + sandbox.engWorkerPartFunctions().map(f => f.toString()).join('\n')
+    + '\n(' + sandbox.engineWorkerMain.toString() + ')();';
+  let last = null;
+  const w = {
+    console: { log(){}, warn(){}, error(){} },
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    performance: { now: () => Date.now() }
+  };
+  w.self = w; w.globalThis = w;
+  w.postMessage = m => { last = m; };
+  vm.createContext(w);
+  vm.runInContext(blobSrc, w, { filename: 'engine-worker.blob.js' });
+
+  // 1) done 消息：clusterByElement 打开时才会求值 sameAttrAdj 的右操作数（历史崩溃点）
+  w.ewMeta = { clusterByElement: true, requiredTotalArea: 0, requiredTotalBase: 0, requiredTotalItems: 0 };
+  let doneErr = null, done = null;
+  try{ w.ewSendDone(Date.now()); done = last; }catch(e){ doneErr = e; }
+  a.ok(!doneErr, `clusterByElement 开启时 done 消息可构造（实得：${doneErr && doneErr.message}）`);
+  a.ok(done && done.type === 'done', 'done 消息已投递');
+  a.eq(done && done.sameAttrAdj, 0, 'done.sameAttrAdj 为数值（空 best 时为 0）');
+  a.eq(done && done.parts && done.parts.same, 0, 'done.parts.same 存在（orchestrator 兜底键名口径）');
+
+  // 2) progress 消息：心跳「当前同元素贴邻对数」的唯一数据源（solver 读 msg.bestSameAttrAdj）
+  w.opWeights = new Array(9).fill(0); // init 前调用需自备算子权重，否则 sort 读 null
+  let progErr = null, prog = null;
+  try{ w.ewSendProgress(Date.now()); prog = last; }catch(e){ progErr = e; }
+  a.ok(!progErr, `progress 消息可构造（实得：${progErr && progErr.message}）`);
+  a.ok(!!prog && Object.prototype.hasOwnProperty.call(prog, 'bestSameAttrAdj'), 'progress 携带 bestSameAttrAdj');
+
+  // 3) 基础属性列口径：只展示「有基础值」的维（攻击力/防御/生命值）
+  vm.runInContext(fs.readFileSync(path.join(SUITE_ROOT, 'js/ui-library.js'), 'utf8'), sandbox, { filename: 'js/ui-library.js' });
+  a.eq(sandbox.baseValueStatKeys().join(','), 'atk,def,hp', '有基础值的维 = atk/def/hp（数据推导）');
+  const rec = sandbox.normalizeItemRecord({ id: 'jin-green-001', uid: 'u', no: 1 });
+  const html = sandbox.baseStatsLinesHtml(rec);
+  const lines = html.split(/<\/?div>/).map(s => s.trim()).filter(Boolean);
+  a.eq(lines.length, 3, `基础属性列 3 行（实得 ${lines.length} 行：${lines.join(' / ')}）`);
+  a.ok(!/伤害|暴击|治疗|护盾|汲取/.test(html), 'rate-only 维不出现在基础属性列');
+  a.ok(/攻击力 6/.test(html) && /生命值 113/.test(html), '基础值逐项渲染正确');
 });
 
 const allPass = results.every(Boolean);

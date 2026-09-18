@@ -313,7 +313,7 @@ function engOrchConvertDone(worker, msg){
     singletonDeferredCount: msg.singletonDeferredCount || 0,
     assignmentChecks: msg.assignmentChecks || 0,
     engine: msg.engine || 'sa',
-    sameAttrAdj: msg.sameAttrAdj || (msg.parts && Number(msg.parts.sameAttr)) || 0
+    sameAttrAdj: msg.sameAttrAdj || (msg.parts && Number(msg.parts.same)) || 0
   };
 }
 

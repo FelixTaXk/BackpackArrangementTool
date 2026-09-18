@@ -106,6 +106,28 @@ function statName(k){
   const s = (window.TALISMAN_DB && window.TALISMAN_DB.bonusStats || []).find(x=>x.id === k);
   return s ? s.name : k;
 }
+// 「有基础值」的属性维（基础属性列展示口径）：注册表中真正携带基础值的项目。
+// atk/def/hp 有基础值；dmg/crit/heal/shield/drain 为 rate-only 维（全库基础值恒为 0，
+// 按 2026-09-10 用户确认口径：不入实际总属性、不展示、仅驱动排序）——
+// 若按注册表全维逐行渲染，法宝库/清单的「基础属性」列会多出 5 行恒为 0 的噪声。
+// 口径由数据推导（不硬编码维下标）：日后 Excel 若为某 rate-only 维补上基础值，其行自动出现。
+// 推导不出（库为空/数据异常）时回退全注册表，展示行为与旧版一致。
+let BASE_VALUE_STAT_KEYS_CACHE = null;
+function baseValueStatKeys(){
+  if(BASE_VALUE_STAT_KEYS_CACHE) return BASE_VALUE_STAT_KEYS_CACHE;
+  const db = typeof window !== 'undefined' ? window.TALISMAN_DB : null;
+  const stats = (db && Array.isArray(db.bonusStats)) ? db.bonusStats : [];
+  const all = stats.map(s=>s && s.id).filter(Boolean);
+  const carried = new Set();
+  for(const t of (db && Array.isArray(db.talismans) ? db.talismans : [])){
+    const b = t && t.baseStats;
+    if(!b) continue;
+    for(const k of Object.keys(b)){ if(Number(b[k]) > 0) carried.add(k); }
+  }
+  const keys = all.filter(k=>carried.has(k));
+  BASE_VALUE_STAT_KEYS_CACHE = keys.length ? keys : all;
+  return BASE_VALUE_STAT_KEYS_CACHE;
+}
 function baseStatsSummary(it){
   if(it.baseStats && Object.keys(it.baseStats).length){
     const keys = Object.keys(it.baseStats).filter(k=>Number(it.baseStats[k]) > 0);
