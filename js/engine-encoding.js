@@ -237,6 +237,8 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
   const adjManW = new Float64Array(E);   // 双向手动优先级加权和
   const adjDefW = new Float64Array(E);   // 双向默认优先级加权和
   const adjDmg = new Uint8Array(E);      // 伤害贴邻 bond（同属性 + 一端加成一端伤害），0/1
+  const adjNoBase = new Uint8Array(E);   // rate-only 维命中次数（0..2，与 scorePairRateOnlyHits 同口径）
+  const adjSame = new Uint8Array(E);     // 同属性对标记（1=同属性），抱团键 sameAdj 用
   const dmgOfItem = i => itemDmg[i] ? true : false;
   // 与 worker 侧 isBond / score-shared scoreIsDamageBond 逐字同口径的 bond 守卫
   const bondOf = (ai, aj) => {
@@ -247,8 +249,11 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
   };
   // 物品对预计算：adjBonus/adjManW/adjDefW 只依赖物品对而非摆放对，
   // 预算 I×I 表后边循环仅查表（避免逐边调用 scorePotentialPairBonus）
-  const tmpA = {sv:null, rv:null, bonusKind:'none', attribute:undefined}, tmpB = {sv:null, rv:null, bonusKind:'none', attribute:undefined};
+  const tmpA = {sv:null, rv:null, bonusKind:'none', attribute:undefined, causesDamage:false}, tmpB = {sv:null, rv:null, bonusKind:'none', attribute:undefined, causesDamage:false};
   const pairBonusTable = new Float64Array(I * I);
+  const pairNoBaseTable = new Uint8Array(I * I); // rate-only 命中次数（0..2）
+  // rate-only 维起始下标 = 有基础值维数（生产环境 3）；K<=rateOnlyFromK 时无 rate-only 维
+  const roK = opts.rateOnlyFromK !== undefined ? Number(opts.rateOnlyFromK) : 0;
   const itemMw = new Float64Array(I), itemDw = new Float64Array(I);
   const attrOf = i => itemAttr[i] === 255 ? undefined : attrNames[itemAttr[i]];
   for(let i = 0; i < I; i++){
@@ -258,21 +263,25 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
     tmpA.rv = itemRates.subarray(i * K, i * K + K);
     tmpA.bonusKind = encKindName(itemKind[i]);
     tmpA.attribute = attrOf(i);
+    tmpA.causesDamage = !!itemDmg[i];
     for(let j = 0; j < I; j++){
       if(i === j) continue;
       tmpB.sv = itemStats.subarray(j * K, j * K + K);
       tmpB.rv = itemRates.subarray(j * K, j * K + K);
       tmpB.bonusKind = encKindName(itemKind[j]);
       tmpB.attribute = attrOf(j);
+      tmpB.causesDamage = !!itemDmg[j];
       pairBonusTable[i * I + j] = scorePotentialPairBonus(tmpA, tmpB);
+      pairNoBaseTable[i * I + j] = scorePairRateOnlyHits(tmpA, tmpB, roK);
     }
   }
   // JS 数组缓存：边循环查表免 TypedArray 读取；行不变量（mwA/dwA）外提
-  const itemMwJ = Array.from(itemMw), itemDwJ = Array.from(itemDw), pairBonusJ = Array.from(pairBonusTable);
+  const itemMwJ = Array.from(itemMw), itemDwJ = Array.from(itemDw), pairBonusJ = Array.from(pairBonusTable), pairNoBaseJ = Array.from(pairNoBaseTable);
   let e = 0;
   for(let a = 0; a < P; a++){
     const ia = plItemJ[a], iaI = ia * I;
     const mwA = itemMwJ[ia], dwA = itemDwJ[ia];
+    const sameA = itemAttr[ia];
     const end = adjOff[a + 1];
     for(let t = adjOff[a]; t < end; t++){
       const b = adjFlat[t], ib = plItemJ[b];
@@ -281,6 +290,8 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
       adjManW[e] = mwA + itemMwJ[ib];  // 双向手动优先级加权和
       adjDefW[e] = dwA + itemDwJ[ib];  // 双向默认优先级加权和
       adjDmg[e] = bondOf(ia, ib) ? 1 : 0; // 伤害贴邻 bond（同属性守卫）
+      adjNoBase[e] = pairNoBaseJ[iaI + ib]; // rate-only 命中次数（对称表，边只存一份）
+      adjSame[e] = (sameA !== 255 && sameA === itemAttr[ib]) ? 1 : 0; // 同属性对标记
       e++;
     }
   }
@@ -296,12 +307,13 @@ function encBuildModel(serialItems, activeMaskStr, W, H, opts){
   return {
     W, H, L, I, K, P, cellCount,
     manualCount, defaultTierCount, useBonus,
+    rateOnlyFromK: (opts.rateOnlyFromK !== undefined ? Number(opts.rateOnlyFromK) : 0),
     statKeys: (opts.statKeys || []).slice(),
     activeMask, globalMaxBonus,
     plMask, plNbr, plItem, plArea, plCellsOff, plCellsLen, cellsFlat, plCellsXY,
     itemValue, itemStats, itemRates, itemKind, itemDmg, itemAttr, itemManual, itemTier, itemPlOff, itemPlLen,
     itemMeta, attributes: attrNames,
-    adjOff, adjPeer, adjBonus, adjManW, adjDefW, adjDmg
+    adjOff, adjPeer, adjBonus, adjManW, adjDefW, adjDmg, adjNoBase, adjSame
   };
 }
 
@@ -313,7 +325,7 @@ function encBundleTables(){
   return [
     'plMask', 'plNbr', 'plItem', 'plArea', 'plCellsOff', 'plCellsLen', 'cellsFlat', 'plCellsXY',
     'itemValue', 'itemStats', 'itemRates', 'itemKind', 'itemDmg', 'itemAttr', 'itemManual', 'itemTier', 'itemPlOff', 'itemPlLen',
-    'adjOff', 'adjPeer', 'adjBonus', 'adjManW', 'adjDefW', 'adjDmg'
+    'adjOff', 'adjPeer', 'adjBonus', 'adjManW', 'adjDefW', 'adjDmg', 'adjNoBase', 'adjSame'
   ];
 }
 
@@ -339,6 +351,9 @@ function encBuildBundle(model){
     head: 0,
     activeMaskLo: model.activeMask.lo, activeMaskHi: model.activeMask.hi,
     globalMaxBonus: model.globalMaxBonus,
+    // rate-only 维起始下标（= 有基础值维数，生产环境 3）；Worker 侧据此统计「命中次数」。
+    // 仅当 K > rateOnlyFromK 时存在 rate-only 维，否则对表天然全 0。
+    rateOnlyFromK: model.rateOnlyFromK !== undefined ? Number(model.rateOnlyFromK) : 0,
     statKeys: model.statKeys.slice(),
     attributes: (model.attributes || []).slice()
   };
@@ -357,6 +372,7 @@ function encDecodeBundle(buffer, offsets){
     manualCount: head[6], defaultTierCount: head[7], useBonus: !!head[8], cellCount: head[9],
     activeMask: {lo: offsets.activeMaskLo, hi: offsets.activeMaskHi},
     globalMaxBonus: offsets.globalMaxBonus,
+    rateOnlyFromK: offsets.rateOnlyFromK !== undefined ? offsets.rateOnlyFromK : 0,
     statKeys: offsets.statKeys || [],
     attributes: offsets.attributes || []
   };
@@ -368,7 +384,7 @@ function encDecodeBundle(buffer, offsets){
     itemAttr: Uint8Array,
     itemManual: Int16Array, itemTier: Int8Array, itemPlOff: Uint32Array, itemPlLen: Uint16Array,
     adjOff: Uint32Array, adjPeer: Uint32Array, adjBonus: Float64Array, adjManW: Float64Array, adjDefW: Float64Array,
-    adjDmg: Uint8Array
+    adjDmg: Uint8Array, adjNoBase: Uint8Array, adjSame: Uint8Array
   };
   for(const name of encBundleTables()){
     const meta = offsets[name];
@@ -420,7 +436,10 @@ function encRebuildBest(solPlInt32, model, ctx){
     useBonus: ctx.useBonus !== undefined ? !!ctx.useBonus : !!model.useBonus,
     manualCount: ctx.manualCount !== undefined ? Number(ctx.manualCount) : model.manualCount,
     defaultTierCount: ctx.defaultTierCount !== undefined ? Number(ctx.defaultTierCount) : model.defaultTierCount,
-    totalItems: ctx.totalItems !== undefined ? Number(ctx.totalItems) : model.I
+    totalItems: ctx.totalItems !== undefined ? Number(ctx.totalItems) : model.I,
+    // rate-only 维起始下标：优先取 ctx，其次取 model（bundle 已下发），最后回退 3
+    rateOnlyFromK: ctx.rateOnlyFromK !== undefined ? Number(ctx.rateOnlyFromK)
+      : (model.rateOnlyFromK !== undefined ? Number(model.rateOnlyFromK) : 3)
   };
   const best = scoreEvaluateConcrete(placements, evalCtx);
   // placements 项键集固定（mask/neighborMask/cells/… 全字段）：

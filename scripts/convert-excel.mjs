@@ -6,13 +6,14 @@
 //
 // 实际 Excel 结构（宽表，8 属性 Sheet，见 docs/excel-spec.md）：
 //   8 个 Sheet（金/木/水/火/土/雷/邪/体），每个 Sheet 即该属性法宝表，宽表列：
-//   法宝名 | 形状 | 共鸣值 | 攻击力 | 防御 | 生命值 | 加成率 | 加成部位 | 加成属性 | 颜色 | 种类 | 是否造成伤害
+//   法宝名 | 形状 | 共鸣值 | 攻击力 | 防御 | 生命值 | 加成率 | 加成部位 | 加成属性 | 颜色 | 种类 | 伤害
 //   - 法宝名为空的行沿用上一行法宝名（同一法宝的多个品质行）；颜色列即品质。
 //   - 形状为矩阵记法（如 "[1 1]"、"[0 1]\n[1 1]"），1 占用、0 空格，逐行解析为 cells [行,列]。
 //   - 加成部位：相邻→provider、相邻自身→self、无→none；加成属性即加成的属性项目，加成率即百分比数值。
-//   - 是否造成伤害：是/1/true/y/yes → causesDamage=true（伤害加成目标标记）。
-// 计算项目限定 atk/def/hp 三项（注册表）；其余项目（共鸣值/种类 及非三项的属性项目）
-// 留存于 extraStats（基础侧）/ extraRates（加成侧），不参与计算与校验。
+//   - 伤害：是/1/true/y/yes → causesDamage=true（伤害加成目标标记）。该列**必须存在**，缺失会中止转换。
+// 计算项目注册表为 8 维（atk/def/hp + dmg/crit/heal/shield/drain）；其中后 5 项为 rate-only
+// 战斗加成（无基础值，计分走「命中次数」通道，不并入实际总属性）。其余项目（共鸣值/种类
+// 及注册表外的属性项目）留存于 extraStats（基础侧）/ extraRates（加成侧），不参与计算与校验。
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -49,13 +50,25 @@ const ATTR_PINYIN = { 金: 'jin', 木: 'mu', 水: 'shui', 火: 'huo', 土: 'tu',
 const QUALITY_EN = { 绿: 'green', 蓝: 'blue', 紫: 'purple', 金: 'gold', 红: 'red' };
 // 加成部位（Excel 实际值）→ bonusMode
 const MODE_MAP = { '相邻': 'provider', '相邻自身': 'self', '无': 'none' };
-// 参与计算的注册表（仅 atk/def/hp 三项，名称取 Excel 实际写法）
+// 参与计算的注册表（8 维）。名称取 Excel「加成属性」列的实际写法。
+// - 前三项 atk/def/hp 有基础值（baseStats），加成公式 = Σ 目标基础值 × 加成率/100；
+// - 后五项 dmg/crit/heal/shield/drain 为 rate-only 战斗加成，**无基础值**，
+//   其「加成属性」列填的是战斗属性名，语义为「提升相邻同属性法宝的该战斗属性」；
+//   计分走「命中次数」通道（见 score-shared.js 的 rate-only 维处理），
+//   不并入面板实际总属性 totalScore。
 const STAT_REGISTRY = [
   { id: 'atk', name: '攻击力' },
   { id: 'def', name: '防御' },
-  { id: 'hp', name: '生命值' }
+  { id: 'hp', name: '生命值' },
+  { id: 'dmg', name: '伤害' },
+  { id: 'crit', name: '暴击伤害' },
+  { id: 'heal', name: '治疗效果' },
+  { id: 'shield', name: '护盾值' },
+  { id: 'drain', name: '汲取' }
 ];
 const STAT_NAME_TO_ID = new Map(STAT_REGISTRY.map(s => [s.name, s.id]));
+// rate-only 维（无基础值，不并入实际总属性；计分走命中次数）——供产物头部注释与报告使用
+const RATE_ONLY_IDS = new Set(['dmg', 'crit', 'heal', 'shield', 'drain']);
 // 宽表列定义（按名称定位，容错处理）
 const COL_DEFS = [
   { key: 'name', names: ['法宝名', '名称'] },
@@ -67,7 +80,7 @@ const COL_DEFS = [
   { key: 'bonusStat', names: ['加成属性'] },
   { key: 'quality', names: ['颜色', '品质'] },
   { key: 'kind', names: ['种类'] },
-  { key: 'causesDamage', names: ['是否造成伤害'] }
+  { key: 'causesDamage', names: ['伤害'] }
 ];
 
 const norm = v => String(v ?? '').trim();
@@ -123,6 +136,8 @@ if (!existsSync(XLSX_PATH)) { console.error('未找到 Excel 文件。'); proces
 const wb = XLSX.read(readFileSync(XLSX_PATH), { type: 'buffer' });
 console.log(`Sheet 列表：${wb.SheetNames.join(' | ')}`);
 const sheetDiffs = [];
+// 致命错误：会导致产物语义静默错误、必须中止转换（区别于 sheetDiffs 的"可容错结构差异"）。
+const fatalErrors = [];
 if (wb.SheetNames.length !== ATTRIBUTES.length || !ATTRIBUTES.every(a => wb.SheetNames.includes(a))) {
   sheetDiffs.push(`期望 Sheet 为 ${ATTRIBUTES.length} 属性（${ATTRIBUTES.join('/')}），实际为：${wb.SheetNames.join('、')}`);
 }
@@ -155,7 +170,12 @@ function locateCols(header) {
     }
     const i = heads.findIndex(h => def.names.includes(h));
     cols[def.key] = i;
-    if (i < 0 && def.key !== 'rate' && def.key !== 'causesDamage') sheetDiffs.push(`缺少列：${def.names.join('/')}`);
+    // 「伤害」列（causesDamage）不可缺失：它决定 dmg 维 provider 加成的双重护栏与 bond 计数，
+    // 缺失会导致这些加成静默全部失效（历史踩坑：列名由「是否造成伤害」改为「伤害」后未同步）。
+    if (i < 0) {
+      if (def.key === 'causesDamage') fatalErrors.push(`缺少「${def.names.join('」/「')}」列；该列缺失会使所有伤害类加成（provider 双重护栏 + bond 计数）静默失效`);
+      else if (def.key !== 'rate') sheetDiffs.push(`缺少列：${def.names.join('/')}`);
+    }
   }
   return cols;
 }
@@ -229,9 +249,10 @@ ATTRIBUTES.forEach((attr, idx) => {
       extraStats['种类'] = norm(row[c.kind]);
     }
 
-    // 是否造成伤害（伤害加成目标标记）：是/1/true/y/yes → causesDamage=true（其余/空不置，缺省 false）
+    // 「伤害」列（伤害加成目标标记）：是/1/true/y/yes → causesDamage=true（其余/空不置，缺省 false）
+    // 该列已在 locateCols 校验存在性（缺失即 fatalErrors 中止），故此处 c.causesDamage 必 >= 0。
     const causesDamage = c.causesDamage >= 0 ? ['是','1','true','y','yes'].includes(norm(row[c.causesDamage]).toLowerCase()) : false;
-    // 加成项目：加成属性 ∈ {攻击力,防御,生命值} → bonusRates；否则 → extraRates
+    // 加成项目：加成属性 ∈ 8 维注册表 → bonusRates（参与计算）；表外名称 → extraRates（仅留存）
     const bonusRates = {};
     const extraRates = {};
     const bonusStatRaw = c.bonusStat >= 0 ? norm(row[c.bonusStat]) : '';
@@ -413,12 +434,14 @@ const bonusStatsCode = STAT_REGISTRY.map(s => `    {id:'${s.id}', name:'${s.name
 const output = `// data/talisman-db.js —— 法宝内置数据库（由 scripts/convert-excel.mjs 从 法宝属性.xlsx 转换生成）。
 // 必须在 js/config.js 之前加载；config.js 的 validateTalismanDB() 会在启动时逐条校验。
 // 数据说明：talismans 共 ${talismans.length} 条，按属性分组（金木水火土雷体）；
-// 参与计算的属性项目仅 atk/def/hp（见 bonusStats 注册表），加成率为百分比数值（如 40 表示 40%）；
-// extraStats/extraRates 为 Excel 中不参与计算的留存项目（如 共鸣值/种类/伤害/暴击伤害等），仅供备查。
+// 参与计算的属性项目为 8 维（见 bonusStats 注册表）：atk/def/hp 有基础值（加成 = 目标基础值 × 加成率/100），
+// dmg/crit/heal/shield/drain 为 rate-only 战斗加成（无基础值，计分走「命中次数」通道，不并入实际总属性）；
+// 加成率为百分比数值（如 40 表示 40%）；
+// extraStats/extraRates 为 Excel 中不参与计算的留存项目（如 共鸣值/种类 及注册表外属性），仅供备查。
 // id 规则：id 为稳定标识，按「名称|属性|品质」匹配上一版产物复用旧 id；新增条目从该 (属性,品质) 组
 // 历史最大序号+1 分配，退役序号永不复用；可在 xlsx 任意位置插行/删行，已有法宝 id 不变。
 window.TALISMAN_DB = {
-  meta:{ version:3 },
+  meta:{ version:4 },
   attributes:[${ATTRIBUTES.map(a => `'${a}'`).join(',')}],
   qualities:[${QUALITIES.map(q => `'${q}'`).join(',')}],
   bonusStats:[
@@ -428,6 +451,14 @@ ${bonusStatsCode}
 ${body}  ]
 };
 `;
+// 致命错误拦截：在写产物之前中止，避免把语义错误的库覆盖到磁盘。
+if (fatalErrors.length) {
+  console.error('\n✗ 转换中止 —— 发现致命结构问题：');
+  for (const e of [...new Set(fatalErrors)]) console.error(`  - ${e}`);
+  console.error('  请修正 Excel 表头后重试（产物未写入，原 data/talisman-db.js 保持不变）。');
+  process.exit(1);
+}
+
 writeFileSync(OUT_PATH, output, 'utf8');
 
 // ---------- 报告 ----------
@@ -463,7 +494,9 @@ for (const q of QUALITIES) {
   for (const [k, names] of m) console.warn(`     [${k}] → ${names.join('、')}`);
 }
 if (shapeConsistent) console.log('  ✓ 全部品质下形状一致。');
-console.log(`bonusStats 注册表（参与计算）：${STAT_REGISTRY.map(s => `${s.name}→${s.id}`).join('、')}`);
+console.log(`bonusStats 注册表（参与计算，共 ${STAT_REGISTRY.length} 维）：${STAT_REGISTRY.map(s => `${s.name}→${s.id}`).join('、')}`);
+console.log(`  · 有基础值维（并入实际总属性）：${STAT_REGISTRY.filter(s => !RATE_ONLY_IDS.has(s.id)).map(s => s.name).join('、')}`);
+console.log(`  · rate-only 维（命中次数计分，不并入总属性）：${STAT_REGISTRY.filter(s => RATE_ONLY_IDS.has(s.id)).map(s => s.name).join('、')}`);
 const extraKeys = new Set();
 for (const t of talismans) {
   Object.keys(t.extraStats || {}).forEach(k => extraKeys.add(`extraStats.${k}`));

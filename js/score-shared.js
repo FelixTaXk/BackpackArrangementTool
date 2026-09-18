@@ -89,6 +89,43 @@ function scoreIsDamageBond(a, b){
   return (aBonus && bDmg) || (bBonus && aDmg);
 }
 
+// ----------------------------------------------------------------------------
+// rate-only 维「命中次数」计分通道（2026-09-10）
+// ----------------------------------------------------------------------------
+// 背景：伤害/暴击伤害/治疗效果/护盾值/汲取 5 类战斗加成**无基础值**，
+//       Σ stats[k]×rates[k]/100 恒为 0，故不能走 scoreSumRatesProduct 的数值通道。
+// 口径（用户确认）：
+//   - 按「相邻法宝件数」计次（不按格子数）；同一件法宝多格相邻只计一次。
+//   - 每命中一次记 1 分，不累加数值、不做率折算。
+//   - **dmg 维额外守卫**：仅 provider 型要求对方 causesDamage；self 型只要求同属性相邻。
+//   - 其余 4 维（crit/heal/shield/drain）：provider/self 一律只要求同属性相邻。
+// 本函数对「一对相邻法宝」给出命中数（无序对天然对称：a→b 与 b→a 各判一次，即最多 2）。
+// rateOnlyFromK：rate-only 维的起始下标（= 有基础值维数 K0，生产环境为 3）；dmg 恒为 rateOnlyFromK + 0。
+function scorePairRateOnlyHits(a, b, rateOnlyFromK){
+  if(a.sv == null || a.rv == null || b.sv == null || b.rv == null) return 0;
+  if(a.attribute !== b.attribute) return 0;      // 同属性守卫（与 scorePairBonusEvents 一致）
+  const start = Number(rateOnlyFromK) || 0;
+  const n = Math.min(a.rv.length, b.rv.length);
+  const rvA = a.rv, rvB = b.rv;
+  const kindA = a.bonusKind, kindB = b.bonusKind;
+  const aIsBonus = kindA === 'provider' || kindA === 'self';
+  const bIsBonus = kindB === 'provider' || kindB === 'self';
+  let hits = 0;
+  for(let k = start; k < n; k++){
+    const dmgDim = (k === start);               // 首个 rate-only 维即 dmg
+    const rateA = rvA[k] || 0;
+    if(rateA > 0 && aIsBonus){
+      // dmg 维仅 provider 型需守卫对方 causesDamage；self 型与其余维一律放行
+      if(!(dmgDim && kindA === 'provider' && !b.causesDamage)) hits++;
+    }
+    const rateB = rvB[k] || 0;
+    if(rateB > 0 && bIsBonus){
+      if(!(dmgDim && kindB === 'provider' && !a.causesDamage)) hits++;
+    }
+  }
+  return hits;
+}
+
 // 无序物品对的潜在加成上限（不做相邻检查）
 function scorePotentialPairBonus(a, b){
   if(a.sv == null || a.rv == null || b.sv == null || b.rv == null) return 0;
@@ -143,12 +180,14 @@ function scoreCompareVectors(a, b){
 }
 
 // 具体摆放全量评估（occupied 用 {lo,hi} 数值对）
-// ctx = {statCount, useBonus, manualCount, defaultTierCount, totalItems(可选，默认 placements.length)}
+// ctx = {statCount, useBonus, manualCount, defaultTierCount, totalItems(可选，默认 placements.length),
+//        rateOnlyFromK(可选，rate-only 维起始下标，默认 3；用于 noBase 命中次数统计)}
 function scoreEvaluateConcrete(placements, ctx){
   const useBonus = !!ctx.useBonus;
   const manualCount = Number(ctx.manualCount) || 0;
   const defaultTierCount = Number(ctx.defaultTierCount) || 0;
   const totalItems = Number.isFinite(Number(ctx.totalItems)) && Number(ctx.totalItems) >= 0 ? Number(ctx.totalItems) : placements.length;
+  const rateOnlyFromK = Number.isFinite(Number(ctx.rateOnlyFromK)) ? Number(ctx.rateOnlyFromK) : 3;
   let baseScore = 0, area = 0, adjacencyCount = 0;
   let occLo = 0, occHi = 0;
   const manualVector = new Array(manualCount).fill(0);
@@ -156,13 +195,17 @@ function scoreEvaluateConcrete(placements, ctx){
   const bonusEvents = [], priorityLinks = [];
   let bonusScore = 0;
   let damageBondCount = 0; // 伤害贴邻 bond 计数（最后破平软偏置，见 scoreIsDamageBond）
+  let sameAdjCount = 0;    // 同属性相邻对数（抱团指标；异属性相邻数 = adjacencyCount - sameAdjCount）
+  let noBaseHitCount = 0;  // rate-only 维命中次数（伤害/汲取/… 的「贴对一件记一次」）
   const views = placements.map(scoreViewOf);
   for(const p of views){ baseScore += p.value; area += p.area; occLo = (occLo | p.lo) >>> 0; occHi = (occHi | p.hi) >>> 0; }
   for(let i = 0; i < views.length; i++) for(let j = i + 1; j < views.length; j++){
     const a = views[i], b = views[j];
     if(!scoreAreAdjacent(a.nbrLo, a.nbrHi, b.lo, b.hi)) continue;
     adjacencyCount++;
+    if(a.attribute === b.attribute) sameAdjCount++;
     if(scoreIsDamageBond(a, b)) damageBondCount++;
+    noBaseHitCount += scorePairRateOnlyHits(a, b, rateOnlyFromK);
     scoreTargetPriorityGain(a, b, manualVector, defaultVector, priorityLinks);
     scoreTargetPriorityGain(b, a, manualVector, defaultVector, priorityLinks);
     if(useBonus){
@@ -173,7 +216,7 @@ function scoreEvaluateConcrete(placements, ctx){
     complete: placements.length === totalItems,
     baseScore, bonusScore, totalScore: baseScore + bonusScore, area,
     itemCount: placements.length, adjacencyCount,
-    damageBondCount,
+    damageBondCount, sameAdjCount, noBaseHitCount,
     manualPriorityVector: manualVector, defaultPriorityVector: defaultVector,
     placements: placements.slice(), occupied: {lo: occLo, hi: occHi},
     bonusEvents, priorityLinks
@@ -181,6 +224,13 @@ function scoreEvaluateConcrete(placements, ctx){
 }
 
 // 结果对象字典序比较（EPS=1e-9）
+// 键序（2026-09-10 更新）：
+//   complete > totalScore > 手动优先级 > 默认优先级
+//   > noBaseHitCount（rate-only 维命中次数：伤害/汲取/暴击/治疗/护盾，贴对一件记一次）
+//   > sameAdjCount（同属性抱团：同属性相邻对数，越多越抱团）
+//   > damageBondCount（伤害贴邻旧键，保留兼容） > adjacencyCount > itemCount > area > base > bonus
+// 说明：noBaseHitCount 与 sameAdjCount 均**不进 totalScore**（面板实际总属性保持纯净），
+//       故它们只在 totalScore 打平时起决定作用；这与「加成优先、抱团只在加成打平时生效」的取向一致。
 function scoreCompareEvaluationObjects(a, b){
   const EPS = 1e-9;
   const ac = !!a.complete, bc = !!b.complete;
@@ -188,7 +238,13 @@ function scoreCompareEvaluationObjects(a, b){
   if(Math.abs(a.totalScore - b.totalScore) > EPS) return a.totalScore > b.totalScore ? 1 : -1;
   const mc = scoreCompareVectors(a.manualPriorityVector, b.manualPriorityVector); if(mc !== 0) return mc;
   const dc = scoreCompareVectors(a.defaultPriorityVector, b.defaultPriorityVector); if(dc !== 0) return dc;
-  // 伤害贴邻 bond（最后破平）：品质默认档位全部相同时才比较加成法宝贴同属性伤害法宝的个数
+  // rate-only 维命中次数（伤害/汲取/暴击/治疗/护盾）：贴对一件记一次，不进总属性
+  const na = a.noBaseHitCount || 0, nb = b.noBaseHitCount || 0;
+  if(na !== nb) return na > nb ? 1 : -1;
+  // 同属性抱团：同属性相邻对数越多越抱团（异属性相邻 = adjacencyCount - sameAdjCount 越少越好）
+  const sa = a.sameAdjCount || 0, sb = b.sameAdjCount || 0;
+  if(sa !== sb) return sa > sb ? 1 : -1;
+  // 伤害贴邻 bond（历史键，保留兼容：新口径下其信息已被 noBaseHitCount 覆盖大半）
   const da = a.damageBondCount || 0, db = b.damageBondCount || 0;
   if(da !== db) return da > db ? 1 : -1;
   if((a.adjacencyCount || 0) !== (b.adjacencyCount || 0)) return (a.adjacencyCount || 0) > (b.adjacencyCount || 0) ? 1 : -1;
@@ -431,6 +487,47 @@ function __SCORE_SELFTEST__(){
   assert(g8b.damageBondCount === 0, '布局8：目标改非伤害 => damageBondCount=0');
   assert(scoreCompareEvaluationObjects(g8a, g8b) === 1, '布局8：total/default 相等时更高 bond 胜出（最后破平）');
 
+  // 布局 9：rate-only 维「命中次数」计分（伤害/汲取/… 无基础值，走命中次数通道）
+  // 8 维向量：atk,def,hp,dmg,crit,heal,shield,drain；rate-only 起始下标 = 3（dmg）
+  // P9：provider（金），rv 的 dmg 维=8 → 提升相邻同属性法宝伤害
+  //   T9a：金，causesDamage=true（同属性且造成伤害）→ 应命中
+  //   T9b：金，causesDamage=false（同属性但不造成伤害）→ dmg 维 provider 守卫应拦下
+  //   T9c：木（异属性）→ 同属性守卫拦下
+  const V9 = (atk, def, hp, dmg) => [atk, def, hp, dmg, 0, 0, 0, 0];
+  // 注意：scorePairRateOnlyHits 只看 sv/rv/attribute/bonusKind/causesDamage，几何掩码无关；
+  // 但 scoreEvaluateConcrete 需真实相邻，故 lo/nbrLo 成对构造（bit0 与 bit1 互邻）。
+  const mk9 = (no, attr, kind, cd, sv, rv, lo, nbrLo) => ({no, itemName:'x' + no, value:1, area:1, bonusKind:kind,
+    attribute:attr, causesDamage:cd, stats:sv, rates:rv, sv, rv,
+    lo:lo, hi:0, nbrLo:nbrLo, nbrHi:0, mask:{lo:lo, hi:0}, neighborMask:{lo:nbrLo, hi:0},
+    manualOrder:-1, priorityTier:-1, customPriority:null});
+  const p9 = mk9(30, '金', 'provider', false, [0, 0, 0, 0, 0, 0, 0, 0], V9(0, 0, 0, 8), 1, 2);
+  const t9a = mk9(31, '金', 'none', true, V9(10, 0, 0, 0), V9(0, 0, 0, 0), 2, 1);
+  const t9b = mk9(32, '金', 'none', false, V9(10, 0, 0, 0), V9(0, 0, 0, 0), 2, 1);
+  const t9c = mk9(33, '木', 'none', true, V9(10, 0, 0, 0), V9(0, 0, 0, 0), 2, 1);
+  assert(scorePairRateOnlyHits(p9, t9a, 3) === 1, '布局9：provider+dmg 命中同属性伤害件 => 1');
+  assert(scorePairRateOnlyHits(p9, t9b, 3) === 0, '布局9：provider+dmg 对方不造成伤害 => 0（守卫生效）');
+  assert(scorePairRateOnlyHits(p9, t9c, 3) === 0, '布局9：provider+dmg 异属性 => 0（同属性守卫）');
+  // self+dmg：仅要求同属性相邻，不判 causesDamage（用户确认口径）
+  const s9 = mk9(34, '金', 'self', false, V9(10, 0, 0, 0), V9(0, 0, 0, 5), 1, 2);
+  assert(scorePairRateOnlyHits(s9, t9b, 3) === 1, '布局9：self+dmg 同属性相邻即命中（不判 causesDamage）');
+  assert(scorePairRateOnlyHits(s9, t9c, 3) === 0, '布局9：self+dmg 异属性不命中');
+  // 非 rate-only 维（crit=下标4）：无守卫，同属性即命中（注意：用完整 8 维字面量，V9 仅构造前 4 维）
+  const c9 = mk9(35, '金', 'provider', false, [0,0,0,0,0,0,0,0], [0,0,0,0,7,0,0,0], 1, 2);
+  assert(scorePairRateOnlyHits(c9, t9b, 3) === 1, '布局9：crit 维无 causesDamage 守卫，同属性即命中');
+  // 单侧命中仍计 1；双方均无 rate-only 率 → 0
+  assert(scorePairRateOnlyHits(p9, mk9(36, '金', 'none', true, V9(10, 0, 0, 0), V9(0, 0, 0, 0), 1, 2), 3) === 1, '布局9：单侧命中仍计 1');
+  assert(scorePairRateOnlyHits(t9a, t9b, 3) === 0, '布局9：双方均无 rate-only 率 => 0');
+  // evaluateConcrete 汇总：noBaseHitCount 与 sameAdjCount 计入且不进 totalScore
+  const g9 = scoreEvaluateConcrete([p9, t9a], {statCount:8, useBonus:true, manualCount:0, defaultTierCount:25, totalItems:2, rateOnlyFromK:3});
+  assert(g9.noBaseHitCount === 1, '布局9：evaluate noBaseHitCount=1');
+  assert(g9.sameAdjCount === 1, '布局9：evaluate sameAdjCount=1');
+  assert(close(g9.totalScore, 2) && close(g9.bonusScore, 0), '布局9：rate-only 不进 totalScore（total=base=2，bonus=0）');
+  const g9d = scoreEvaluateConcrete([p9, t9b], {statCount:8, useBonus:true, manualCount:0, defaultTierCount:25, totalItems:2, rateOnlyFromK:3});
+  assert(g9d.noBaseHitCount === 0, '布局9：非伤害对手 => noBaseHitCount=0');
+  assert(close(g9d.totalScore, g9.totalScore), '布局9：伤害与否不影响 totalScore');
+  assert(g9d.sameAdjCount === 1, '布局9：两者同属性 => sameAdjCount 均为 1');
+  assert(scoreCompareEvaluationObjects(g9, g9d) === 1, '布局9：total/sameAdj 相等时 noBaseHitCount 高者胜');
+
   return {pass: failures.length === 0, failures};
 }
 
@@ -440,6 +537,7 @@ if(typeof window !== 'undefined'){
   window.scoreViewOf = scoreViewOf;
   window.scorePairBonusEvents = scorePairBonusEvents;
   window.scorePotentialPairBonus = scorePotentialPairBonus;
+  window.scorePairRateOnlyHits = scorePairRateOnlyHits;
   window.scoreIsDamageBond = scoreIsDamageBond;
   window.scoreTargetPriorityGain = scoreTargetPriorityGain;
   window.scorePriorityGainFor = scorePriorityGainFor;
